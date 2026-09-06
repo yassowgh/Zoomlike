@@ -1,0 +1,15 @@
+{
+  "name": "zoomlike",
+  "version": "0.1.0",
+  "description": "A Zoom-like meeting app with a real-time collaborative whiteboard, fully hosted on Cloudflare (free tier).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

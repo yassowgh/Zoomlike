@@ -1,0 +1,39 @@
+name = "zoomlike"
+main = "worker/index.js"
+compatibility_date = "2025-01-01"
+
+# Serve the static single-page app straight from the Worker (free).
+# Any request that is not a real file falls through to the Worker's fetch()
+# handler, which handles /api/* and forwards everything else back to the SPA.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# One Durable Object instance per meeting room. Handles WebSocket signaling
+# for WebRTC, live whiteboard broadcast, and whiteboard persistence.
+# Durable Objects with the SQLite backend are available on the FREE plan.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDurableObject"]
+
+# ---------------------------------------------------------------------------
+# Optional configuration. Set these in the Cloudflare dashboard (Settings ->
+# Variables) or with `wrangler secret put` so they are not committed to git.
+#
+# RECORDING_UPLOAD_URL : your own server endpoint that accepts a POST
+#                        multipart upload of the recorded .webm file.
+# TURN_URLS            : comma-separated TURN server URLs (optional, improves
+#                        connectivity behind strict NATs). STUN is free below.
+# TURN_USERNAME        : TURN credential username (optional).
+# TURN_CREDENTIAL      : TURN credential password (optional).
+# ---------------------------------------------------------------------------
+[vars]
+RECORDING_UPLOAD_URL = ""
+TURN_URLS = ""
+TURN_USERNAME = ""
+TURN_CREDENTIAL = ""

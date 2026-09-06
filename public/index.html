@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="description" content="Free Zoom-like video meetings with a real-time collaborative whiteboard. Hosted entirely on Cloudflare." />
+    <meta name="theme-color" content="#0b1220" />
+    <title>Zoomlike — Meet &amp; Whiteboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎥</text></svg>" />
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body>
+    <!-- ============================ LOBBY ============================ -->
+    <section id="lobby" class="lobby">
+      <div class="lobby-card">
+        <h1>🎥 Zoomlike</h1>
+        <p class="tagline">Video meetings with a shared whiteboard. Free, no install.</p>
+
+        <label class="field">
+          <span>Your name</span>
+          <input id="nameInput" type="text" placeholder="e.g. Yasser" autocomplete="name" maxlength="40" />
+        </label>
+
+        <label class="field">
+          <span>Room name</span>
+          <div class="row">
+            <input id="roomInput" type="text" placeholder="team-standup" maxlength="64" />
+            <button id="randomRoomBtn" class="ghost" type="button" title="Random room name">🎲</button>
+          </div>
+        </label>
+
+        <div class="lobby-actions">
+          <button id="joinBtn" class="primary" type="button">Join / Create room</button>
+        </div>
+
+        <details class="prejoin">
+          <summary>Device &amp; join options</summary>
+          <label class="check"><input id="optCam" type="checkbox" checked /> Start with camera on</label>
+          <label class="check"><input id="optMic" type="checkbox" checked /> Start with microphone on</label>
+        </details>
+
+        <p class="hint" id="lobbyHint"></p>
+      </div>
+      <footer class="lobby-foot">Whiteboard-first · Peer-to-peer video · Runs on Cloudflare</footer>
+    </section>
+
+    <!-- ============================ ROOM ============================ -->
+    <section id="room" class="room" hidden>
+      <header class="topbar">
+        <div class="topbar-left">
+          <strong id="roomTitle">Room</strong>
+          <button id="copyLinkBtn" class="ghost small" type="button">🔗 Copy invite</button>
+        </div>
+        <div class="topbar-right">
+          <span id="connState" class="pill">connecting…</span>
+          <button id="viewToggle" class="ghost small" type="button">🖼️ View</button>
+        </div>
+      </header>
+
+      <main class="stage">
+        <!-- Whiteboard (primary surface) -->
+        <div id="boardWrap" class="board-wrap">
+          <canvas id="board" class="board"></canvas>
+          <canvas id="overlay" class="board overlay"></canvas>
+
+          <div id="toolbar" class="toolbar">
+            <button class="tool active" data-tool="pen" title="Pen">✏️</button>
+            <button class="tool" data-tool="line" title="Line">╱</button>
+            <button class="tool" data-tool="rect" title="Rectangle">▭</button>
+            <button class="tool" data-tool="ellipse" title="Ellipse">◯</button>
+            <button class="tool" data-tool="arrow" title="Arrow">➶</button>
+            <button class="tool" data-tool="text" title="Text">T</button>
+            <button class="tool" data-tool="eraser" title="Eraser">🧽</button>
+            <span class="sep"></span>
+            <input id="colorPick" class="color" type="color" value="#ffd400" title="Colour" />
+            <input id="sizePick" class="size" type="range" min="1" max="24" value="3" title="Stroke width" />
+            <span class="sep"></span>
+            <button id="undoBtn" class="tool" title="Undo my last">↶</button>
+            <button id="clearBtn" class="tool danger" title="Clear board">🗑️</button>
+          </div>
+        </div>
+
+        <!-- Video filmstrip -->
+        <aside id="videos" class="videos"></aside>
+      </main>
+
+      <!-- Control bar -->
+      <div class="controls">
+        <button id="micBtn" class="ctrl" title="Mute / unmute">🎙️</button>
+        <button id="camBtn" class="ctrl" title="Camera on / off">📷</button>
+        <button id="shareBtn" class="ctrl" title="Share screen">🖥️</button>
+        <button id="recBtn" class="ctrl" title="Record session">⏺️</button>
+        <button id="chatBtn" class="ctrl" title="Chat">💬</button>
+        <button id="leaveBtn" class="ctrl leave" title="Leave">📞</button>
+      </div>
+
+      <!-- Chat drawer -->
+      <div id="chat" class="chat" hidden>
+        <div class="chat-head"><strong>Chat</strong><button id="chatClose" class="ghost small">✕</button></div>
+        <div id="chatLog" class="chat-log"></div>
+        <form id="chatForm" class="chat-form">
+          <input id="chatInput" type="text" placeholder="Message…" maxlength="2000" autocomplete="off" />
+          <button class="primary small" type="submit">Send</button>
+        </form>
+      </div>
+
+      <div id="toast" class="toast" hidden></div>
+    </section>
+
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>
