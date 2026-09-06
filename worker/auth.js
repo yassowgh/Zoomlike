@@ -20,7 +20,25 @@ export class AuthDurableObject {
     const body = await request.json().catch(() => ({}));
     if (url.pathname.endsWith("/register")) return this.register(body);
     if (url.pathname.endsWith("/login")) return this.login(body);
+    if (url.pathname.endsWith("/sched-add")) return this.schedAdd(body);
+    if (url.pathname.endsWith("/sched-list")) return this.schedList(body);
+    if (url.pathname.endsWith("/sched-del")) return this.schedDel(body);
     return json({ error: "Not found" }, 404);
+  }
+
+  async schedAdd({ email, meeting }) {
+    if (!email || !meeting || !meeting.id) return json({ error: "Bad request" }, 400);
+    await this.state.storage.put(`sched:${email}:${meeting.id}`, meeting);
+    return json(meeting);
+  }
+  async schedList({ email }) {
+    const map = await this.state.storage.list({ prefix: `sched:${email}:` });
+    const items = [...map.values()].sort((a, b) => String(a.when).localeCompare(String(b.when)));
+    return json({ meetings: items });
+  }
+  async schedDel({ email, id }) {
+    await this.state.storage.delete(`sched:${email}:${id}`);
+    return json({ ok: true });
   }
 
   async register({ email, password, name }) {

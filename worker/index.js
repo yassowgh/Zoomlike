@@ -36,6 +36,50 @@ export default {
       return Response.json({ email: "", name, guest: true, token });
     }
 
+    // ---- Scheduled meetings (auth required, no guests) -----------------
+    if (url.pathname === "/api/meetings") {
+      const payload = await readToken(bearer(request), secret);
+      if (!payload || payload.guest || !payload.email) return Response.json({ error: "Sign in to schedule meetings." }, { status: 401 });
+
+      if (request.method === "GET") {
+        const res = await authStub(env).fetch(new Request("https://do/sched-list", {
+          method: "POST", body: JSON.stringify({ email: payload.email }),
+        }));
+        return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+      }
+      if (request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const room = (body.room || "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64) || ("mtg-" + crypto.randomUUID().slice(0, 8));
+        const meeting = {
+          id: crypto.randomUUID().slice(0, 12),
+          title: String(body.title || "Meeting").slice(0, 120),
+          when: String(body.when || ""),
+          room,
+          ownerEmail: payload.email,
+          ownerName: payload.name,
+          createdAt: Date.now(),
+        };
+        // Make the scheduler the owner/host of that room.
+        try {
+          const rstub = env.ROOMS.get(env.ROOMS.idFromName(room));
+          await rstub.fetch(new Request("https://do/set-owner", { method: "POST", headers: { "X-Internal": "set-owner" }, body: JSON.stringify({ email: payload.email }) }));
+        } catch {}
+        const res = await authStub(env).fetch(new Request("https://do/sched-add", {
+          method: "POST", body: JSON.stringify({ email: payload.email, meeting }),
+        }));
+        return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+      }
+    }
+    if (url.pathname.startsWith("/api/meetings/") && request.method === "DELETE") {
+      const payload = await readToken(bearer(request), secret);
+      if (!payload || payload.guest) return Response.json({ error: "Not authenticated" }, { status: 401 });
+      const id = url.pathname.split("/").pop();
+      const res = await authStub(env).fetch(new Request("https://do/sched-del", {
+        method: "POST", body: JSON.stringify({ email: payload.email, id }),
+      }));
+      return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+    }
+
     // ---- Public config --------------------------------------------------
     if (url.pathname === "/api/config") {
       return Response.json({
@@ -57,7 +101,8 @@ export default {
       const roomId = match[1];
       const fwd = new URL(request.url);
       fwd.searchParams.set("name", payload.name);
-      fwd.searchParams.set("email", payload.email);
+      fwd.searchParams.set("email", payload.email || "");
+      if (payload.guest) fwd.searchParams.set("guest", "1");
       const id = env.ROOMS.idFromName(roomId);
       return env.ROOMS.get(id).fetch(new Request(fwd, request));
     }

@@ -90,6 +90,22 @@
           <label class="check"><input id="optMic" type="checkbox" checked /> Start with microphone on</label>
         </details>
 
+        <div class="sched" id="schedSection">
+          <div class="sched-head">
+            <strong>📅 Your scheduled meetings</strong>
+            <button id="schedNewBtn" class="ghost small" type="button">＋ Schedule</button>
+          </div>
+          <div id="schedList" class="sched-list"></div>
+          <form id="schedForm" class="sched-form" hidden>
+            <input id="schedTitle" type="text" placeholder="Meeting title" maxlength="120" />
+            <input id="schedWhen" type="datetime-local" />
+            <div class="row">
+              <button class="primary small" type="submit">Save</button>
+              <button id="schedCancel" type="button" class="ghost small">Cancel</button>
+            </div>
+          </form>
+        </div>
+
         <p class="hint" id="lobbyHint"></p>
       </div>
       <footer class="lobby-foot">Whiteboard-first · Peer-to-peer video · Runs on Cloudflare</footer>
@@ -152,6 +168,16 @@
         <div class="ctrl-item"><button id="micBtn" class="ctrl" title="Mute / unmute">🎙️</button><span class="cl">Mute</span></div>
         <div class="ctrl-item"><button id="camBtn" class="ctrl" title="Camera on / off">📷</button><span class="cl">Camera</span></div>
         <div class="ctrl-item"><button id="shareBtn" class="ctrl" title="Share your screen">🖥️</button><span class="cl">Share</span></div>
+        <div class="ctrl-item ctrl-pop">
+          <button id="bgVideoBtn" class="ctrl" title="Virtual background">🌄</button><span class="cl">Effects</span>
+          <div id="bgVideoMenu" class="pop-menu" hidden>
+            <button data-vbg="none">🚫 None</button>
+            <button data-vbg="blur">🌫️ Blur background</button>
+            <button data-vbg="office">🏢 Office</button>
+            <button data-vbg="beach">🏖️ Beach</button>
+            <button data-vbg="space">🌌 Space</button>
+          </div>
+        </div>
         <div class="ctrl-item"><button id="handBtn" class="ctrl" title="Raise / lower hand">✋</button><span class="cl">Hand</span></div>
         <div class="ctrl-item ctrl-pop">
           <button id="reactBtn" class="ctrl" title="Send a reaction">😀</button><span class="cl">React</span>
@@ -180,12 +206,44 @@
       <div id="people" class="side-panel" hidden>
         <div class="side-head">
           <strong>Participants (<span id="peopleCount">1</span>)</strong>
-          <div>
-            <button id="muteAllBtn" class="ghost small host-only" hidden type="button">🔇 Mute all</button>
-            <button id="peopleClose" class="ghost small" type="button">✕</button>
+          <button id="peopleClose" class="ghost small" type="button">✕</button>
+        </div>
+
+        <div id="waitingWrap" class="waiting-wrap" hidden>
+          <div class="waiting-title">Waiting to join</div>
+          <div id="waitingList" class="people-list"></div>
+        </div>
+
+        <div id="peopleList" class="people-list"></div>
+
+        <div id="hostTools" class="host-tools" hidden>
+          <button id="muteAllBtn" class="ghost small" type="button">🔇 Mute all</button>
+          <button id="lowerHandsBtn" class="ghost small" type="button">✋ Lower all hands</button>
+          <button id="breakoutBtn" class="ghost small" type="button">🧩 Breakout rooms</button>
+          <label class="wr-toggle"><input id="waitingToggle" type="checkbox" /> Waiting room</label>
+        </div>
+      </div>
+
+      <!-- Breakout rooms (host) -->
+      <div id="breakout" class="side-panel" hidden>
+        <div class="side-head"><strong>Breakout rooms</strong><button id="breakoutClose" class="ghost small" type="button">✕</button></div>
+        <div class="breakout-body">
+          <label class="field"><span>Number of rooms</span>
+            <input id="brkCount" type="number" min="1" max="8" value="2" />
+          </label>
+          <button id="brkCreate" class="ghost small" type="button">Create &amp; auto-assign</button>
+          <div id="brkPreview" class="brk-preview"></div>
+          <div class="brk-actions">
+            <button id="brkOpen" class="primary small" type="button" disabled>Open rooms</button>
+            <button id="brkCloseAll" class="ghost small" type="button">Close all</button>
           </div>
         </div>
-        <div id="peopleList" class="people-list"></div>
+      </div>
+
+      <!-- Breakout banner (participant) -->
+      <div id="breakoutBanner" class="breakout-banner" hidden>
+        <span>🧩 You're in a breakout room.</span>
+        <button id="returnMain" class="ghost small" type="button">← Return to main room</button>
       </div>
 
       <!-- Chat drawer -->
@@ -202,6 +260,16 @@
             <button class="primary small" type="submit">Send</button>
           </div>
         </form>
+      </div>
+
+      <!-- Waiting room (participant) -->
+      <div id="waitingScreen" class="modal" hidden>
+        <div class="modal-card center">
+          <div class="spinner"></div>
+          <h3>Waiting for the host…</h3>
+          <p>You'll join <strong id="waitRoom"></strong> as soon as the host admits you.</p>
+          <button id="waitLeave" class="ghost" type="button">Cancel</button>
+        </div>
       </div>
 
       <!-- Leave confirmation -->

@@ -340,3 +340,41 @@ input { font: inherit; }
 .tile .host-badge { position: absolute; top: 6px; right: 6px; font-size: 10px; background: var(--accent); color: #fff; border-radius: 5px; padding: 1px 5px; }
 
 .controls { flex-wrap: wrap; }
+
+/* ---- Waiting room / spinner ---- */
+.modal-card.center { text-align: center; }
+.spinner { width: 38px; height: 38px; margin: 4px auto 14px; border-radius: 50%;
+  border: 4px solid var(--line); border-top-color: var(--accent); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.waiting-wrap { border-bottom: 1px solid var(--line); padding: 8px; }
+.waiting-title { font-size: 12px; color: var(--muted); margin: 2px 6px 6px; text-transform: uppercase; letter-spacing: .04em; }
+
+/* ---- Host tools ---- */
+.host-tools { border-top: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.host-tools button { text-align: left; }
+.wr-toggle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+
+/* ---- Breakout ---- */
+.breakout-body { padding: 12px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.brk-preview { display: flex; flex-direction: column; gap: 8px; }
+.brk-room { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.brk-room b { font-size: 13px; }
+.brk-room .m { font-size: 12px; color: var(--muted); }
+.brk-actions { display: flex; gap: 8px; }
+.breakout-banner { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); z-index: 26;
+  display: flex; align-items: center; gap: 10px; background: #7c3aed; color: #fff;
+  padding: 8px 14px; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; }
+.breakout-banner .ghost { background: rgba(255,255,255,.2); border-color: transparent; color: #fff; }
+
+/* ---- Schedule ---- */
+.sched { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.sched-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.sched-list { display: flex; flex-direction: column; gap: 8px; }
+.sched-item { display: flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.sched-item .si-main { flex: 1; min-width: 0; }
+.sched-item .si-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched-item .si-when { font-size: 12px; color: var(--muted); }
+.sched-item .si-act { display: flex; gap: 6px; }
+.sched-empty { color: var(--muted); font-size: 13px; padding: 4px 2px; }
+.sched-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.sched-form input { min-height: 40px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; color: var(--text); }

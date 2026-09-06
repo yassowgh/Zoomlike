@@ -5,6 +5,7 @@ import { Signaling } from "./signaling.js";
 import { Whiteboard } from "./whiteboard.js";
 import { Mesh } from "./rtc.js";
 import { Recorder } from "./recorder.js";
+import { VirtualBg } from "./virtualbg.js";
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -37,6 +38,19 @@ const el = {
   peopleBtn: $("peopleBtn"), people: $("people"), peopleClose: $("peopleClose"),
   peopleList: $("peopleList"), peopleCount: $("peopleCount"), muteAllBtn: $("muteAllBtn"),
   chatTo: $("chatTo"),
+  // waiting room + host tools
+  waitingScreen: $("waitingScreen"), waitRoom: $("waitRoom"), waitLeave: $("waitLeave"),
+  waitingWrap: $("waitingWrap"), waitingList: $("waitingList"), hostTools: $("hostTools"),
+  lowerHandsBtn: $("lowerHandsBtn"), waitingToggle: $("waitingToggle"), breakoutBtn: $("breakoutBtn"),
+  // breakout
+  breakout: $("breakout"), breakoutClose: $("breakoutClose"), brkCount: $("brkCount"),
+  brkCreate: $("brkCreate"), brkPreview: $("brkPreview"), brkOpen: $("brkOpen"), brkCloseAll: $("brkCloseAll"),
+  breakoutBanner: $("breakoutBanner"), returnMain: $("returnMain"),
+  // virtual background
+  bgVideoBtn: $("bgVideoBtn"), bgVideoMenu: $("bgVideoMenu"),
+  // schedule
+  schedSection: $("schedSection"), schedNewBtn: $("schedNewBtn"), schedList: $("schedList"),
+  schedForm: $("schedForm"), schedTitle: $("schedTitle"), schedWhen: $("schedWhen"), schedCancel: $("schedCancel"),
 };
 
 const state = {
@@ -46,6 +60,8 @@ const state = {
   peerNames: new Map(), tiles: new Map(),
   micOn: true, camOn: true, sharing: false,
   selfId: "", host: "", peers: new Map(), hand: false, recTarget: "computer",
+  waiting: true, waitingList: new Map(), breakouts: [], vbg: null, vbgMode: "none",
+  skip: false, mainRoom: "",
 };
 const isHost = () => state.selfId && state.selfId === state.host;
 
@@ -65,13 +81,15 @@ function roomFromUrl() {
 // ------------------------------------------------------------------ auth
 async function initAuth() {
   wireAuthForm();
-  const token = localStorage.getItem("zl_token") || "";
+  // sessionStorage carries a guest/reload token across navigations (breakouts);
+  // localStorage carries a registered user's persistent login.
+  const token = sessionStorage.getItem("zl_token") || localStorage.getItem("zl_token") || "";
   if (token) {
     try {
       const r = await fetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } });
-      if (r.ok) { const me = await r.json(); return enterLobby({ ...me, token }); }
+      if (r.ok) { const me = await r.json(); return enterLobby({ ...me, token, guest: me.guest }); }
     } catch {}
-    localStorage.removeItem("zl_token");
+    sessionStorage.removeItem("zl_token"); localStorage.removeItem("zl_token");
   }
   showAuth();
 }
@@ -162,15 +180,20 @@ function showGuestOption() {
 }
 
 function enterLobby(account) {
-  state.name = account.name; state.email = account.email; state.token = account.token;
+  state.name = account.name; state.email = account.email || ""; state.token = account.token;
+  state.isGuest = !!account.guest || !state.email;
+  sessionStorage.setItem("zl_token", account.token);
   el.whoami.textContent = account.name;
   el.nameInput.value = account.name;
   el.auth.hidden = true; el.lobby.hidden = false; el.room.hidden = true;
+  // Scheduling is for registered users only.
+  el.schedSection.hidden = state.isGuest;
+  if (!state.isGuest) { wireSchedule(); loadSchedule(); }
   initLobby();
 }
 
 function logout() {
-  localStorage.removeItem("zl_token");
+  localStorage.removeItem("zl_token"); sessionStorage.removeItem("zl_token");
   state.token = ""; state.name = ""; state.email = "";
   location.href = "/";
 }
@@ -178,6 +201,123 @@ function logout() {
 function applyBackground(name) {
   el.boardWrap.dataset.bg = name;
   localStorage.setItem("zl_bg", name);
+}
+
+// ------------------------------------------------------------- breakouts
+function buildBreakouts() {
+  const count = Math.max(1, Math.min(8, parseInt(el.brkCount.value, 10) || 2));
+  const members = [...state.peers.keys()]; // everyone except the host (self)
+  state.breakouts = Array.from({ length: count }, (_, i) => ({ room: `${state.roomId}-b${i + 1}`.slice(0, 60), name: `Room ${i + 1}`, members: [] }));
+  members.forEach((id, i) => state.breakouts[i % count].members.push(id));
+  el.brkPreview.innerHTML = "";
+  for (const r of state.breakouts) {
+    const div = document.createElement("div"); div.className = "brk-room";
+    const names = r.members.map((id) => state.peers.get(id)?.name || "?").join(", ") || "(empty)";
+    div.innerHTML = `<b></b><div class="m"></div>`;
+    div.querySelector("b").textContent = r.name;
+    div.querySelector(".m").textContent = names;
+    el.brkPreview.appendChild(div);
+  }
+  el.brkOpen.disabled = members.length === 0;
+  if (!members.length) toast("No other participants to assign yet");
+}
+
+// ------------------------------------------------------ virtual background
+async function setVirtualBg(mode) {
+  if (mode === "none") {
+    state.vbgMode = "none";
+    if (state.vbg) state.vbg.stop();
+    state.vbg = null; state.vbgTrack = null;
+    applyVideoOutput();
+    toast("Virtual background off");
+    return;
+  }
+  if (!state.camTrack || state.camTrack.readyState !== "live") {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true });
+      state.camTrack = s.getVideoTracks()[0];
+      if (!state.localStream.getVideoTracks().length) {
+        state.localStream.addTrack(state.camTrack);
+        state.mesh?.peers.forEach(({ pc }) => pc.addTrack(state.camTrack, state.localStream));
+      }
+      state.camOn = true; applyTrackState();
+    } catch { toast("Turn on your camera to use a virtual background"); return; }
+  }
+  try {
+    toast("Applying background…");
+    if (!state.vbg) state.vbg = new VirtualBg();
+    if (state.vbg.running) { state.vbg.setMode(mode); }
+    else { state.vbgTrack = await state.vbg.start(state.camTrack, mode); }
+    state.vbgMode = mode;
+    applyVideoOutput();
+    toast("Virtual background applied");
+  } catch (err) {
+    console.warn("virtual bg failed", err);
+    toast("Virtual background unavailable on this device");
+    state.vbgMode = "none";
+  }
+}
+
+// Decide which video track goes out: screen share > virtual bg > camera.
+function applyVideoOutput() {
+  let track = null;
+  if (state.sharing && state.screenTrack) track = state.screenTrack;
+  else if (state.vbgMode !== "none" && state.vbgTrack) track = state.vbgTrack;
+  else if (state.camTrack && state.camTrack.readyState === "live") track = state.camTrack;
+  state.mesh?.replaceVideoTrack(track);
+  refreshSelfTile(track ? new MediaStream([track]) : state.localStream);
+}
+
+// --------------------------------------------------------------- schedule
+function wireSchedule() {
+  if (wireSchedule.done) return; wireSchedule.done = true;
+  el.schedNewBtn.onclick = () => { el.schedForm.hidden = false; el.schedTitle.focus(); };
+  el.schedCancel.onclick = () => { el.schedForm.hidden = true; };
+  el.schedForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const title = el.schedTitle.value.trim() || "Meeting";
+    const when = el.schedWhen.value;
+    const room = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      const r = await fetch("/api/meetings", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer " + state.token },
+        body: JSON.stringify({ title, when, room }),
+      });
+      if (r.ok) { el.schedForm.hidden = true; el.schedTitle.value = ""; el.schedWhen.value = ""; loadSchedule(); toast("Meeting scheduled"); }
+      else toast("Could not schedule");
+    } catch { toast("Network error"); }
+  };
+}
+
+async function loadSchedule() {
+  try {
+    const r = await fetch("/api/meetings", { headers: { Authorization: "Bearer " + state.token } });
+    if (!r.ok) return;
+    const { meetings } = await r.json();
+    renderSchedule(meetings || []);
+  } catch {}
+}
+
+function renderSchedule(meetings) {
+  el.schedList.innerHTML = "";
+  if (!meetings.length) { el.schedList.innerHTML = '<div class="sched-empty">No meetings scheduled yet.</div>'; return; }
+  for (const m of meetings) {
+    const item = document.createElement("div"); item.className = "sched-item";
+    const when = m.when ? new Date(m.when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Any time";
+    item.innerHTML = `<div class="si-main"><div class="si-title"></div><div class="si-when"></div></div><div class="si-act"></div>`;
+    item.querySelector(".si-title").textContent = m.title;
+    item.querySelector(".si-when").textContent = when;
+    const act = item.querySelector(".si-act");
+    const start = document.createElement("button"); start.className = "ghost small"; start.textContent = "Start";
+    start.onclick = () => { el.roomInput.value = m.room; join(); };
+    const copy = document.createElement("button"); copy.className = "ghost small"; copy.textContent = "🔗";
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(`${location.origin}/room/${m.room}`); toast("Invite copied"); } catch {} };
+    const del = document.createElement("button"); del.className = "ghost small"; del.textContent = "🗑️";
+    del.onclick = async () => { await fetch("/api/meetings/" + m.id, { method: "DELETE", headers: { Authorization: "Bearer " + state.token } }); loadSchedule(); };
+    act.append(start, copy, del);
+    el.schedList.appendChild(item);
+  }
 }
 
 // ----------------------------------------------------------------- lobby
@@ -203,6 +343,9 @@ async function join() {
 
   state.name = name; state.roomId = roomId;
   state.micOn = el.optMic.checked; state.camOn = el.optCam.checked;
+  const params = new URLSearchParams(location.search);
+  state.skip = params.get("skip") === "1";
+  state.mainRoom = params.get("main") || "";
   localStorage.setItem("zl_name", name);
 
   el.joinBtn.disabled = true;
@@ -214,9 +357,14 @@ async function join() {
   try { state.config = await (await fetch("/api/config")).json(); }
   catch { state.config = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }], recordingUploadUrl: "" }; }
 
-  history.replaceState(null, "", `/room/${roomId}`);
+  history.replaceState(null, "", `/room/${roomId}${location.search}`);
   el.lobby.hidden = true; el.room.hidden = false;
   el.roomTitle.textContent = roomId;
+  // Breakout banner + return button.
+  if (state.mainRoom) {
+    el.breakoutBanner.hidden = false;
+    el.returnMain.onclick = () => { location.href = `/room/${encodeURIComponent(state.mainRoom)}?skip=1`; };
+  }
 
   setupBoard();
   setupControls();
@@ -321,11 +469,44 @@ function setupControls() {
     state.sig?.send({ type: "host-mute", target: "all" });
     toast("Muted everyone");
   };
+  el.lowerHandsBtn.onclick = () => {
+    if (!isHost()) return;
+    state.sig?.send({ type: "hand-lower-all" });
+    state.hand = false; el.handBtn.classList.remove("on"); setTileHand("self", false);
+    for (const [id, p] of state.peers) { p.hand = false; setTileHand(id, false); }
+    renderPeople(); toast("Lowered all hands");
+  };
+  el.waitingToggle.onchange = () => {
+    if (!isHost()) return;
+    state.waiting = el.waitingToggle.checked;
+    state.sig?.send({ type: "waiting-toggle", on: state.waiting });
+  };
+
+  // Waiting room (participant) cancel.
+  el.waitLeave.onclick = () => leave();
+
+  // Breakout rooms (host).
+  el.breakoutBtn.onclick = () => { el.people.hidden = true; el.breakout.hidden = false; };
+  el.breakoutClose.onclick = () => (el.breakout.hidden = true);
+  el.brkCreate.onclick = () => buildBreakouts();
+  el.brkOpen.onclick = () => {
+    if (!state.breakouts.length) return;
+    state.sig?.send({ type: "breakout-open", rooms: state.breakouts });
+    toast("Breakout rooms opened"); el.breakout.hidden = true;
+  };
+  el.brkCloseAll.onclick = () => { state.sig?.send({ type: "breakout-close" }); toast("Closing breakout rooms"); };
+
+  // Virtual background.
+  el.bgVideoBtn.onclick = (e) => { e.stopPropagation(); el.bgVideoMenu.hidden = !el.bgVideoMenu.hidden; };
+  el.bgVideoMenu.querySelectorAll("button").forEach((b) => {
+    b.onclick = () => { el.bgVideoMenu.hidden = true; setVirtualBg(b.dataset.vbg); };
+  });
 
   // Close popovers on outside click.
   document.addEventListener("click", (e) => {
     if (!el.reactMenu.hidden && !el.reactMenu.contains(e.target) && e.target !== el.reactBtn) el.reactMenu.hidden = true;
     if (!el.recMenu.hidden && !el.recMenu.contains(e.target) && e.target !== el.recBtn) el.recMenu.hidden = true;
+    if (!el.bgVideoMenu.hidden && !el.bgVideoMenu.contains(e.target) && e.target !== el.bgVideoBtn) el.bgVideoMenu.hidden = true;
   });
 
   // Exit with confirmation.
@@ -418,8 +599,7 @@ async function toggleShare() {
     state.screenTrack = s.getVideoTracks()[0];
     state.sharing = true;
     el.shareBtn.classList.add("on");
-    state.mesh?.replaceVideoTrack(state.screenTrack);
-    refreshSelfTile(new MediaStream([state.screenTrack]));
+    applyVideoOutput();
     state.screenTrack.onended = () => stopShare();
   } catch { /* user cancelled */ }
 }
@@ -430,9 +610,7 @@ function stopShare() {
   el.shareBtn.classList.remove("on");
   try { state.screenTrack.stop(); } catch {}
   state.screenTrack = null;
-  const cam = state.camTrack && state.camTrack.readyState === "live" ? state.camTrack : null;
-  state.mesh?.replaceVideoTrack(cam);
-  refreshSelfTile();
+  applyVideoOutput();
 }
 
 function startRecording(target) {
@@ -474,7 +652,7 @@ function leave() {
 
 // ------------------------------------------------------------ signaling
 function connect() {
-  const sig = new Signaling(state.roomId, state.name, state.token);
+  const sig = new Signaling(state.roomId, state.name, state.token, state.skip);
   state.sig = sig;
 
   const mesh = new Mesh({
@@ -489,9 +667,15 @@ function connect() {
   sig.addEventListener("open", () => { el.connState.textContent = "connected"; el.connState.classList.add("ok"); });
   sig.addEventListener("close", () => { el.connState.textContent = "reconnecting…"; el.connState.classList.remove("ok"); });
 
+  sig.addEventListener("waiting", () => {
+    el.waitingScreen.hidden = false;
+    el.waitRoom.textContent = state.roomId;
+  });
+
   sig.addEventListener("welcome", (e) => {
-    const { self, host, peers, board } = e.detail;
-    state.selfId = self; state.host = host;
+    const { self, host, peers, board, waiting } = e.detail;
+    state.selfId = self; state.host = host; state.waiting = waiting !== false;
+    el.waitingScreen.hidden = true; // admitted
     mesh.setSelf(self);
     state.board.loadShapes(board);
     for (const p of peers) {
@@ -499,8 +683,33 @@ function connect() {
       state.peers.set(p.id, { name: p.name, mic: true, cam: true, hand: false });
       mesh.addPeer(p.id, p.name);
     }
+    el.waitingToggle.checked = state.waiting;
     updateHostUI(); renderPeople(); refreshChatTo();
     broadcastMedia();
+  });
+
+  // Host receives a request to admit someone from the waiting room.
+  sig.addEventListener("wait-request", (e) => {
+    state.waitingList.set(e.detail.id, e.detail.name);
+    renderWaiting();
+    toast(`✋ ${e.detail.name} is waiting to join`);
+  });
+  sig.addEventListener("denied", () => { alert("The host did not admit you to the meeting."); leave(); });
+  sig.addEventListener("waiting-state", (e) => { state.waiting = e.detail.on; el.waitingToggle.checked = e.detail.on; });
+
+  sig.addEventListener("hand-lower-all", () => {
+    state.hand = false; el.handBtn.classList.remove("on"); setTileHand("self", false);
+    for (const [id, p] of state.peers) { p.hand = false; setTileHand(id, false); }
+    renderPeople();
+  });
+
+  sig.addEventListener("breakout-open", (e) => {
+    const { room, roomName } = e.detail;
+    toast(`Joining breakout: ${roomName || room}`);
+    setTimeout(() => { location.href = `/room/${encodeURIComponent(room)}?main=${encodeURIComponent(state.roomId)}&skip=1`; }, 800);
+  });
+  sig.addEventListener("breakout-close", () => {
+    if (state.mainRoom) { toast("Returning to main room…"); setTimeout(() => (location.href = `/room/${encodeURIComponent(state.mainRoom)}?skip=1`), 600); }
   });
 
   sig.addEventListener("peer-join", (e) => {
@@ -508,6 +717,7 @@ function connect() {
     state.peerNames.set(id, name);
     state.peers.set(id, { name, mic: true, cam: true, hand: false });
     mesh.addPeer(id, name);
+    if (state.waitingList.delete(id)) renderWaiting();
     renderPeople(); refreshChatTo();
     toast(`${name} joined`);
   });
@@ -663,8 +873,28 @@ function personRow(id, name, s, self) {
 }
 
 function updateHostUI() {
-  el.muteAllBtn.hidden = !isHost();
+  el.hostTools.hidden = !isHost();
+  el.waitingToggle.checked = state.waiting;
+  renderWaiting();
   refreshTileHostBadges();
+}
+
+function renderWaiting() {
+  const host = isHost();
+  el.waitingWrap.hidden = !host || state.waitingList.size === 0;
+  if (!host) return;
+  el.waitingList.innerHTML = "";
+  for (const [id, name] of state.waitingList) {
+    const row = document.createElement("div");
+    row.className = "prow";
+    const nm = document.createElement("span"); nm.className = "pname"; nm.textContent = name;
+    const admit = document.createElement("button"); admit.className = "pact"; admit.textContent = "Admit";
+    admit.onclick = () => { state.sig?.send({ type: "admit", id }); state.waitingList.delete(id); renderWaiting(); };
+    const deny = document.createElement("button"); deny.className = "pact"; deny.textContent = "Deny";
+    deny.onclick = () => { state.sig?.send({ type: "deny", id }); state.waitingList.delete(id); renderWaiting(); };
+    row.append(nm, admit, deny);
+    el.waitingList.appendChild(row);
+  }
 }
 
 function refreshChatTo() {
