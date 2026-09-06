@@ -90,7 +90,10 @@ export class RoomDurableObject {
     const waiting = (await this.state.storage.get("waiting")) !== false;
     const others = this.admittedPeers().filter((p) => p.connId !== self.connId).map((p) => ({ id: p.connId, name: p.name }));
     const board = await this.loadBoard();
-    this.send(ws, { type: "welcome", self: self.connId, host: this.hostId(owner), owner: owner || null, peers: others, board, waiting });
+    const allowDraw = (await this.state.storage.get("allowDraw")) === true;
+    const allowShare = (await this.state.storage.get("allowShare")) === true;
+    const amHost = !self.guest && owner && self.email === owner;
+    this.send(ws, { type: "welcome", self: self.connId, host: this.hostId(owner), owner: owner || null, peers: others, board, waiting, allowDraw, allowShare, canDraw: amHost || allowDraw, canShare: amHost || allowShare });
     this.broadcastAdmitted({ type: "peer-join", id: self.connId, name: self.name }, self.connId);
     // If this is the host, tell them about anyone already waiting.
     if (!self.guest && owner && self.email === owner) {
@@ -128,18 +131,28 @@ export class RoomDurableObject {
     // Everything else requires an admitted participant.
     if (!self.admitted) return;
 
+    const allowDraw = (await this.state.storage.get("allowDraw")) === true;
+    const canDraw = isHost || allowDraw;
+
     switch (msg.type) {
       case "signal": this.toId(msg.to, { type: "signal", from: self.connId, name: self.name, data: msg.data }); break;
 
+      // Screen-share on/off announcement (so peers route it to the main stage).
+      case "screen": this.broadcastAdmitted({ type: "screen", id: self.connId, name: self.name, on: !!msg.on, streamId: msg.streamId || null }, self.connId); break;
+
       case "draw":
-        if (msg.shape && msg.shape.id) await this.state.storage.put("shape:" + msg.shape.id, msg.shape);
+        if (!canDraw) break;
+        // Persist (best-effort; a very large image still broadcasts live).
+        if (msg.shape && msg.shape.id) { try { await this.state.storage.put("shape:" + msg.shape.id, msg.shape); } catch {} }
         this.broadcastAdmitted({ type: "draw", shape: msg.shape }, self.connId);
         break;
       case "erase":
+        if (!canDraw) break;
         if (msg.id) await this.state.storage.delete("shape:" + msg.id);
         this.broadcastAdmitted({ type: "erase", id: msg.id }, self.connId);
         break;
       case "clear": {
+        if (!canDraw) break;
         const map = await this.state.storage.list({ prefix: "shape:" });
         await this.state.storage.delete([...map.keys()]);
         this.broadcastAdmitted({ type: "clear" }, self.connId);
@@ -189,6 +202,20 @@ export class RoomDurableObject {
         if (!isHost) break;
         await this.state.storage.put("waiting", !!msg.on);
         this.broadcastAdmitted({ type: "waiting-state", on: !!msg.on });
+        break;
+      case "allow-draw":
+        if (!isHost) break;
+        await this.state.storage.put("allowDraw", !!msg.on);
+        this.broadcastAdmitted({ type: "perm", what: "draw", on: !!msg.on });
+        break;
+      case "allow-share":
+        if (!isHost) break;
+        await this.state.storage.put("allowShare", !!msg.on);
+        this.broadcastAdmitted({ type: "perm", what: "share", on: !!msg.on });
+        break;
+      case "end-session":
+        if (!isHost) break;
+        this.broadcast({ type: "session-end" });
         break;
 
       // ---- breakout rooms ----

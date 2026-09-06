@@ -120,6 +120,13 @@
         </div>
         <div class="topbar-right">
           <span id="connState" class="pill">connecting…</span>
+          <div class="ctrl-pop" style="position:relative">
+            <button id="exportBtn" class="ghost small" type="button" title="Save the whiteboard">⤓ Save board</button>
+            <div id="exportMenu" class="pop-menu" hidden style="left:auto;right:0;transform:none;bottom:auto;top:40px">
+              <button data-exp="pdf">📄 Save as PDF</button>
+              <button data-exp="png">🖼️ Save as PNG</button>
+            </div>
+          </div>
           <button id="bgBtn" class="ghost small" type="button" title="Change board background">🎨 Background</button>
           <button id="galleryBtn" class="ghost small" type="button" title="Switch between whiteboard and gallery">🔳 Gallery</button>
         </div>
@@ -143,13 +150,16 @@
           <canvas id="overlay" class="board overlay"></canvas>
 
           <div id="toolbar" class="toolbar">
+            <button class="tool" data-tool="select" title="Select / move">↖</button>
             <button class="tool active" data-tool="pen" title="Pen">✏️</button>
             <button class="tool" data-tool="line" title="Line">╱</button>
             <button class="tool" data-tool="rect" title="Rectangle">▭</button>
             <button class="tool" data-tool="ellipse" title="Ellipse">◯</button>
             <button class="tool" data-tool="arrow" title="Arrow">➶</button>
-            <button class="tool" data-tool="text" title="Text">T</button>
+            <button class="tool" data-tool="text" title="Text (click to place, type inline)">T</button>
             <button class="tool" data-tool="eraser" title="Eraser">🧽</button>
+            <button class="tool" data-tool="pan" title="Pan / scroll">🖐</button>
+            <button id="imageBtn" class="tool" title="Insert image">🖼️</button>
             <span class="sep"></span>
             <input id="colorPick" class="color" type="color" value="#ffd400" title="Colour" />
             <input id="sizePick" class="size" type="range" min="1" max="24" value="3" title="Stroke width" />
@@ -157,11 +167,36 @@
             <button id="undoBtn" class="tool" title="Undo my last">↶</button>
             <button id="clearBtn" class="tool danger" title="Clear board">🗑️</button>
           </div>
+
+          <!-- Zoom controls -->
+          <div class="zoom-ctrls">
+            <button id="zoomOut" title="Zoom out">−</button>
+            <button id="zoomFit" title="Reset view">⤢</button>
+            <button id="zoomIn" title="Zoom in">＋</button>
+          </div>
+
+          <!-- Selection actions -->
+          <div id="selBar" class="sel-bar" hidden>
+            <button id="selLock" class="ghost small" type="button">🔒 Lock</button>
+            <button id="selDelete" class="ghost small" type="button">🗑️ Delete</button>
+          </div>
+
+          <div id="noDrawHint" class="nodraw-hint" hidden>👀 View only — the host controls who can draw</div>
+          <input id="imageInput" type="file" accept="image/*" hidden />
+        </div>
+
+        <!-- Screen share main stage (camera keeps running in the strip) -->
+        <div id="screenStage" class="screen-stage" hidden>
+          <video id="screenVideo" autoplay playsinline></video>
+          <div class="screen-label"><span id="screenWho"></span> is sharing
+            <button id="screenHide" class="ghost small" type="button">Show whiteboard</button>
+          </div>
         </div>
 
         <!-- Video filmstrip -->
         <aside id="videos" class="videos"></aside>
       </main>
+      <button id="screenPeek" class="ghost small screen-peek" hidden type="button">📺 View shared screen</button>
 
       <!-- Control bar -->
       <div class="controls">
@@ -221,6 +256,9 @@
           <button id="lowerHandsBtn" class="ghost small" type="button">✋ Lower all hands</button>
           <button id="breakoutBtn" class="ghost small" type="button">🧩 Breakout rooms</button>
           <label class="wr-toggle"><input id="waitingToggle" type="checkbox" /> Waiting room</label>
+          <label class="wr-toggle"><input id="allowDrawToggle" type="checkbox" /> Let everyone draw</label>
+          <label class="wr-toggle"><input id="allowShareToggle" type="checkbox" /> Let everyone share screen</label>
+          <button id="endMeetingBtn" class="danger-btn" type="button" style="width:100%">⛔ End meeting for all</button>
         </div>
       </div>
 

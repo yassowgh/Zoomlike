@@ -31,6 +31,11 @@ export class Mesh {
       pc.addTransceiver("audio", { direction: "recvonly" });
       pc.addTransceiver("video", { direction: "recvonly" });
     }
+    // If a screen share is already active, publish it to the new peer too.
+    if (this.screenStream) {
+      const st = this.screenStream.getVideoTracks()[0];
+      if (st) pc.addTrack(st, this.screenStream);
+    }
 
     pc.ontrack = (ev) => this.onStream(peerId, name, ev.streams[0]);
 
@@ -97,6 +102,25 @@ export class Mesh {
       const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
       if (sender) sender.replaceTrack(track);
     }
+  }
+
+  // Publish a screen-share stream as an ADDITIONAL track (camera keeps going).
+  setScreenStream(stream) {
+    this.screenStream = stream;
+    const track = stream && stream.getVideoTracks()[0];
+    if (!track) return;
+    for (const { pc } of this.peers.values()) {
+      if (![...pc.getSenders()].some((s) => s.track === track)) pc.addTrack(track, stream);
+    }
+  }
+  stopScreenStream() {
+    if (!this.screenStream) return;
+    const track = this.screenStream.getVideoTracks()[0];
+    for (const { pc } of this.peers.values()) {
+      const sender = pc.getSenders().find((s) => s.track === track);
+      if (sender) { try { pc.removeTrack(sender); } catch {} }
+    }
+    this.screenStream = null;
   }
 
   removePeer(peerId) {

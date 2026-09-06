@@ -51,6 +51,12 @@ const el = {
   // schedule
   schedSection: $("schedSection"), schedNewBtn: $("schedNewBtn"), schedList: $("schedList"),
   schedForm: $("schedForm"), schedTitle: $("schedTitle"), schedWhen: $("schedWhen"), schedCancel: $("schedCancel"),
+  // whiteboard v2 + permissions + export + screen stage
+  imageBtn: $("imageBtn"), imageInput: $("imageInput"), zoomIn: $("zoomIn"), zoomOut: $("zoomOut"), zoomFit: $("zoomFit"),
+  selBar: $("selBar"), selLock: $("selLock"), selDelete: $("selDelete"), noDrawHint: $("noDrawHint"),
+  exportBtn: $("exportBtn"), exportMenu: $("exportMenu"),
+  screenStage: $("screenStage"), screenVideo: $("screenVideo"), screenWho: $("screenWho"), screenHide: $("screenHide"), screenPeek: $("screenPeek"),
+  allowDrawToggle: $("allowDrawToggle"), allowShareToggle: $("allowShareToggle"), endMeetingBtn: $("endMeetingBtn"),
 };
 
 const state = {
@@ -62,6 +68,9 @@ const state = {
   selfId: "", host: "", peers: new Map(), hand: false, recTarget: "computer",
   waiting: true, waitingList: new Map(), breakouts: [], vbg: null, vbgMode: "none",
   skip: false, mainRoom: "",
+  canDraw: true, canShare: true, allowDraw: false, allowShare: false,
+  screenIds: new Map(), // peerId -> announced screen stream id
+  seenStreams: new Map(), // peerId -> [streams]
 };
 const isHost = () => state.selfId && state.selfId === state.host;
 
@@ -258,14 +267,30 @@ async function setVirtualBg(mode) {
   }
 }
 
-// Decide which video track goes out: screen share > virtual bg > camera.
+// Camera output: virtual background if on, else the raw camera. (Screen share
+// is a SEPARATE track now, so it never replaces the camera.)
 function applyVideoOutput() {
   let track = null;
-  if (state.sharing && state.screenTrack) track = state.screenTrack;
-  else if (state.vbgMode !== "none" && state.vbgTrack) track = state.vbgTrack;
+  if (state.vbgMode !== "none" && state.vbgTrack) track = state.vbgTrack;
   else if (state.camTrack && state.camTrack.readyState === "live") track = state.camTrack;
   state.mesh?.replaceVideoTrack(track);
   refreshSelfTile(track ? new MediaStream([track]) : state.localStream);
+}
+
+function routeStream(peerId, name, stream) {
+  const list = state.seenStreams.get(peerId) || [];
+  if (!list.includes(stream)) list.push(stream);
+  state.seenStreams.set(peerId, list);
+  if (state.screenIds.get(peerId) === stream.id) showScreen(state.peerNames.get(peerId) || name, stream);
+  else addTile(peerId, state.peerNames.get(peerId) || name, stream);
+}
+
+function applyPermUI() {
+  el.noDrawHint.hidden = state.canDraw;
+  el.shareBtn.disabled = !state.canShare;
+  el.shareBtn.style.opacity = state.canShare ? "" : "0.5";
+  if (el.allowDrawToggle) el.allowDrawToggle.checked = state.allowDraw;
+  if (el.allowShareToggle) el.allowShareToggle.checked = state.allowShare;
 }
 
 // --------------------------------------------------------------- schedule
@@ -403,10 +428,12 @@ function setupBoard() {
   wb.setColor(el.colorPick.value);
   wb.setSize(el.sizePick.value);
 
-  wb.onShape = (shape) => state.sig?.send({ type: "draw", shape });
-  wb.onErase = (id) => state.sig?.send({ type: "erase", id });
-  const sendCursor = throttle((x, y) => state.sig?.send({ type: "cursor", x, y }), 60);
-  wb.onCursor = sendCursor;
+  const sendShape = (o) => { const { mine, ...rest } = o; state.sig?.send({ type: "draw", shape: rest }); };
+  wb.onAdd = sendShape;
+  wb.onUpdate = sendShape;
+  wb.onDelete = (id) => state.sig?.send({ type: "erase", id });
+  wb.onCursor = throttle((x, y) => state.sig?.send({ type: "cursor", x, y }), 60);
+  wb.onSelect = (o) => updateSelBar(o);
 
   el.toolbar.querySelectorAll(".tool[data-tool]").forEach((btn) => {
     btn.onclick = () => {
@@ -419,8 +446,66 @@ function setupBoard() {
   el.sizePick.oninput = () => wb.setSize(el.sizePick.value);
   el.undoBtn.onclick = () => wb.undoMine();
   el.clearBtn.onclick = () => {
+    if (!state.canDraw) return toast("You don't have drawing permission");
     if (confirm("Clear the whiteboard for everyone?")) { wb.clearAll(); state.sig?.send({ type: "clear" }); }
   };
+
+  el.zoomIn.onclick = () => wb.zoomBy(1.2);
+  el.zoomOut.onclick = () => wb.zoomBy(1 / 1.2);
+  el.zoomFit.onclick = () => wb.resetView();
+
+  el.selDelete.onclick = () => wb.deleteSelected();
+  el.selLock.onclick = () => wb.toggleLockSelected();
+
+  el.imageBtn.onclick = () => { if (!state.canDraw) return toast("You don't have drawing permission"); el.imageInput.click(); };
+  el.imageInput.onchange = () => { const f = el.imageInput.files[0]; if (f) readImage(f, (src) => wb.insertImage(src)); el.imageInput.value = ""; };
+  window.addEventListener("paste", (e) => {
+    if (el.room.hidden || !state.canDraw) return;
+    const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+    if (item) { const f = item.getAsFile(); if (f) readImage(f, (src) => wb.insertImage(src)); }
+  });
+
+  el.exportBtn.onclick = (e) => { e.stopPropagation(); el.exportMenu.hidden = !el.exportMenu.hidden; };
+  el.exportMenu.querySelectorAll("button").forEach((b) => (b.onclick = () => { el.exportMenu.hidden = true; exportBoard(b.dataset.exp); }));
+
+  document.addEventListener("keydown", (e) => {
+    if (el.room.hidden) return;
+    if ((e.key === "Delete" || e.key === "Backspace") && wb.selectedId && !e.target.matches("input, textarea")) { e.preventDefault(); wb.deleteSelected(); }
+  });
+}
+
+function updateSelBar(o) {
+  el.selBar.hidden = !(o && state.canDraw);
+  if (o) el.selLock.textContent = o.locked ? "🔓 Unlock" : "🔒 Lock";
+}
+
+function readImage(file, cb) {
+  const r = new FileReader();
+  r.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1000; let w = img.width, h = img.height; const s = Math.min(1, max / Math.max(w, h));
+      const c = document.createElement("canvas"); c.width = Math.round(w * s); c.height = Math.round(h * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      cb(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.src = r.result;
+  };
+  r.readAsDataURL(file);
+}
+
+async function exportBoard(kind) {
+  const bg = { dark: "#0e1730", white: "#ffffff", slate: "#334155", blue: "#0b3d91", green: "#0f5132", grid: "#12203f", dots: "#12203f" }[el.boardWrap.dataset.bg] || "#0e1730";
+  const { url, w, h } = state.board.exportImage(bg);
+  if (kind === "png") { const a = document.createElement("a"); a.href = url; a.download = `whiteboard-${Date.now()}.png`; document.body.appendChild(a); a.click(); a.remove(); toast("Saved PNG"); return; }
+  try {
+    if (!window.jspdf) await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: w >= h ? "l" : "p", unit: "pt", format: [w, h] });
+    pdf.addImage(url, "PNG", 0, 0, w, h);
+    pdf.save(`whiteboard-${Date.now()}.pdf`);
+    toast("Saved PDF");
+  } catch (e) { console.warn(e); toast("PDF export failed"); }
 }
 
 // ------------------------------------------------------------- controls
@@ -481,6 +566,16 @@ function setupControls() {
     state.waiting = el.waitingToggle.checked;
     state.sig?.send({ type: "waiting-toggle", on: state.waiting });
   };
+  el.allowDrawToggle.onchange = () => { if (isHost()) state.sig?.send({ type: "allow-draw", on: el.allowDrawToggle.checked }); };
+  el.allowShareToggle.onchange = () => { if (isHost()) state.sig?.send({ type: "allow-share", on: el.allowShareToggle.checked }); };
+  el.endMeetingBtn.onclick = () => {
+    if (!isHost()) return;
+    if (confirm("End the meeting for everyone?")) { state.sig?.send({ type: "end-session" }); leave(); }
+  };
+
+  // Screen stage <-> whiteboard toggle.
+  el.screenHide.onclick = () => { el.screenStage.hidden = true; el.boardWrap.hidden = false; if (el.screenPeek) el.screenPeek.hidden = false; state.board?.resize(); };
+  if (el.screenPeek) el.screenPeek.onclick = () => { el.screenStage.hidden = false; el.boardWrap.hidden = true; el.screenPeek.hidden = true; };
 
   // Waiting room (participant) cancel.
   el.waitLeave.onclick = () => leave();
@@ -593,13 +688,17 @@ function broadcastMedia() {
 }
 
 async function toggleShare() {
+  if (!state.canShare) return toast("The host controls who can share the screen");
   if (state.sharing) return stopShare();
   try {
     const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    state.screenStream = s;
     state.screenTrack = s.getVideoTracks()[0];
     state.sharing = true;
     el.shareBtn.classList.add("on");
-    applyVideoOutput();
+    state.mesh?.setScreenStream(s);         // ADDS a track; camera keeps running
+    state.sig?.send({ type: "screen", on: true, streamId: s.id });
+    showScreen("You", s);
     state.screenTrack.onended = () => stopShare();
   } catch { /* user cancelled */ }
 }
@@ -609,8 +708,26 @@ function stopShare() {
   state.sharing = false;
   el.shareBtn.classList.remove("on");
   try { state.screenTrack.stop(); } catch {}
-  state.screenTrack = null;
-  applyVideoOutput();
+  state.mesh?.stopScreenStream();
+  state.sig?.send({ type: "screen", on: false });
+  state.screenTrack = null; state.screenStream = null;
+  hideScreen();
+}
+
+function showScreen(name, stream) {
+  el.screenVideo.srcObject = stream;
+  el.screenWho.textContent = name || "Someone";
+  el.screenStage.hidden = false;
+  el.boardWrap.hidden = true;
+  el.screenPeek && (el.screenPeek.hidden = true);
+  el.screenVideo.play?.().catch(() => {});
+}
+function hideScreen() {
+  el.screenStage.hidden = true;
+  el.boardWrap.hidden = false;
+  el.screenVideo.srcObject = null;
+  el.screenPeek && (el.screenPeek.hidden = true);
+  state.board?.resize();
 }
 
 function startRecording(target) {
@@ -658,8 +775,11 @@ function connect() {
   const mesh = new Mesh({
     iceServers: state.config?.iceServers || [{ urls: "stun:stun.l.google.com:19302" }],
     send: (to, data) => sig.send({ type: "signal", to, data }),
-    onStream: (peerId, name, stream) => addTile(peerId, state.peerNames.get(peerId) || name, stream),
-    onLeave: (peerId) => { removeTile(peerId); state.board?.removeCursor(peerId); },
+    onStream: (peerId, name, stream) => routeStream(peerId, name, stream),
+    onLeave: (peerId) => {
+      removeTile(peerId); state.board?.removeCursor(peerId); state.seenStreams.delete(peerId);
+      if (state.screenIds.has(peerId)) { state.screenIds.delete(peerId); hideScreen(); }
+    },
   });
   mesh.setLocalStream(state.localStream);
   state.mesh = mesh;
@@ -673,19 +793,48 @@ function connect() {
   });
 
   sig.addEventListener("welcome", (e) => {
-    const { self, host, peers, board, waiting } = e.detail;
+    const { self, host, peers, board, waiting, canDraw, canShare, allowDraw, allowShare } = e.detail;
     state.selfId = self; state.host = host; state.waiting = waiting !== false;
+    state.canDraw = canDraw !== false; state.canShare = canShare !== false;
+    state.allowDraw = !!allowDraw; state.allowShare = !!allowShare;
     el.waitingScreen.hidden = true; // admitted
     mesh.setSelf(self);
     state.board.loadShapes(board);
+    state.board.setCanDraw(state.canDraw);
     for (const p of peers) {
       state.peerNames.set(p.id, p.name);
       state.peers.set(p.id, { name: p.name, mic: true, cam: true, hand: false });
       mesh.addPeer(p.id, p.name);
     }
     el.waitingToggle.checked = state.waiting;
-    updateHostUI(); renderPeople(); refreshChatTo();
+    updateHostUI(); renderPeople(); refreshChatTo(); applyPermUI();
     broadcastMedia();
+  });
+
+  sig.addEventListener("perm", (e) => {
+    if (e.detail.what === "draw") state.allowDraw = e.detail.on;
+    if (e.detail.what === "share") state.allowShare = e.detail.on;
+    state.canDraw = isHost() || state.allowDraw;
+    state.canShare = isHost() || state.allowShare;
+    state.board.setCanDraw(state.canDraw);
+    applyPermUI();
+    toast(e.detail.what === "draw" ? (e.detail.on ? "Everyone can draw now" : "Drawing restricted to host") : (e.detail.on ? "Everyone can share now" : "Sharing restricted to host"));
+  });
+
+  sig.addEventListener("session-end", () => { alert("The host has ended the meeting."); leave(); });
+
+  // Screen share routing (screen shows on the main stage; cameras keep running).
+  sig.addEventListener("screen", (e) => {
+    const { id, name, on, streamId } = e.detail;
+    if (on) {
+      state.screenIds.set(id, streamId);
+      const streams = state.seenStreams.get(id) || [];
+      const match = streams.find((s) => s.id === streamId) || streams[streams.length - 1];
+      if (match) showScreen(name, match);
+    } else {
+      state.screenIds.delete(id);
+      hideScreen();
+    }
   });
 
   // Host receives a request to admit someone from the waiting room.
@@ -875,6 +1024,11 @@ function personRow(id, name, s, self) {
 function updateHostUI() {
   el.hostTools.hidden = !isHost();
   el.waitingToggle.checked = state.waiting;
+  // Host can always draw/share; recompute in case host role changed.
+  state.canDraw = isHost() || state.allowDraw;
+  state.canShare = isHost() || state.allowShare;
+  state.board?.setCanDraw(state.canDraw);
+  applyPermUI();
   renderWaiting();
   refreshTileHostBadges();
 }

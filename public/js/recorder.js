@@ -105,7 +105,27 @@ export class Recorder {
     });
     this.chunks = [];
     this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
+    this.startedAt = Date.now();
     this.rec.start(1000); // gather data every second
+  }
+
+  // MediaRecorder WebM has no Duration/Cues, so players can't seek. Patch the
+  // duration in so the file is scrubbable (forward/backward).
+  async _fixSeek(blob) {
+    try {
+      if (!window.ysFixWebmDuration) {
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.5/fix-webm-duration.js";
+          s.onload = res; s.onerror = rej; document.head.appendChild(s);
+        });
+      }
+      if (window.ysFixWebmDuration) {
+        const dur = Date.now() - (this.startedAt || Date.now());
+        return await window.ysFixWebmDuration(blob, dur, { logger: false });
+      }
+    } catch (e) { console.warn("duration fix failed", e); }
+    return blob;
   }
 
   // target: "computer" | "server"
@@ -121,7 +141,8 @@ export class Recorder {
     try { this.audioCtx && this.audioCtx.close(); } catch {}
 
     const type = this.rec.mimeType || "video/webm";
-    const blob = new Blob(this.chunks, { type });
+    let blob = new Blob(this.chunks, { type });
+    blob = await this._fixSeek(blob); // make it seekable
     const filename = `zoomlike-${roomId || "room"}-${stamp()}.webm`;
 
     if (target === "server" && this.uploadUrl) {

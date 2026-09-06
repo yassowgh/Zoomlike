@@ -378,3 +378,21 @@ input { font: inherit; }
 .sched-empty { color: var(--muted); font-size: 13px; padding: 4px 2px; }
 .sched-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .sched-form input { min-height: 40px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; color: var(--text); }
+
+/* ---- Whiteboard: inline text, zoom, selection, screen stage ---- */
+.wb-text-input { position: absolute; z-index: 8; background: rgba(255,255,255,.06); border: 1px dashed var(--accent);
+  color: var(--text); font-family: system-ui, sans-serif; line-height: 1.2; padding: 2px 4px; min-width: 40px;
+  outline: none; resize: none; overflow: hidden; white-space: pre; }
+.zoom-ctrls { position: absolute; right: 12px; bottom: 12px; z-index: 6; display: flex; flex-direction: column; gap: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.zoom-ctrls button { width: 38px; height: 38px; border: 0; background: transparent; color: var(--text); font-size: 18px; border-radius: 8px; cursor: pointer; }
+.zoom-ctrls button:hover { background: var(--panel-2); }
+.sel-bar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 7; display: flex; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.nodraw-hint { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 5;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); padding: 6px 14px; border-radius: 999px; font-size: 13px; }
+.screen-stage { flex: 1; min-width: 0; position: relative; background: #000; display: flex; align-items: center; justify-content: center; }
+.screen-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.screen-label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,.6); color: #fff; padding: 4px 10px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.screen-label .ghost { background: rgba(255,255,255,.15); border-color: transparent; color: #fff; }
+.screen-peek { position: absolute; left: 12px; top: 52px; z-index: 26; }
