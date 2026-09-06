@@ -14,6 +14,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -59,6 +60,11 @@ input { font: inherit; }
 .field input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 .row { display: flex; gap: 8px; }
 .lobby-actions { margin-top: 6px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 18px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; }
+.tab { flex: 1; min-height: 38px; background: transparent; border: 0; color: var(--muted); border-radius: 8px; font-weight: 600; }
+.tab.active { background: var(--accent); color: #fff; }
+.signed-in { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 16px; font-size: 13px; color: var(--muted); }
+.signed-in strong { color: var(--text); }
 .prejoin { margin-top: 16px; color: var(--muted); }
 .prejoin summary { cursor: pointer; }
 .check { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text); }

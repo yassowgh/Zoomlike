@@ -10,16 +10,49 @@
     <link rel="stylesheet" href="/css/styles.css" />
   </head>
   <body>
-    <!-- ============================ LOBBY ============================ -->
-    <section id="lobby" class="lobby">
+    <!-- ============================ AUTH ============================ -->
+    <section id="auth" class="lobby" hidden>
       <div class="lobby-card">
         <h1>🎥 Zoomlike</h1>
-        <p class="tagline">Video meetings with a shared whiteboard. Free, no install.</p>
+        <p class="tagline" id="authTagline">Log in to start meeting.</p>
 
-        <label class="field">
-          <span>Your name</span>
-          <input id="nameInput" type="text" placeholder="e.g. Yasser" autocomplete="name" maxlength="40" />
-        </label>
+        <div class="tabs">
+          <button id="tabLogin" class="tab active" type="button">Log in</button>
+          <button id="tabRegister" class="tab" type="button">Register</button>
+        </div>
+
+        <form id="authForm">
+          <label class="field" id="nameField" hidden>
+            <span>Full name</span>
+            <input id="authName" type="text" placeholder="Your name" autocomplete="name" maxlength="40" />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" required />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="authPassword" type="password" placeholder="At least 6 characters" autocomplete="current-password" required />
+          </label>
+          <button id="authSubmit" class="primary" type="submit">Log in</button>
+        </form>
+        <p class="hint" id="authHint"></p>
+      </div>
+      <footer class="lobby-foot">Your account is stored securely on Cloudflare · passwords are hashed</footer>
+    </section>
+
+    <!-- ============================ LOBBY ============================ -->
+    <section id="lobby" class="lobby" hidden>
+      <div class="lobby-card">
+        <h1>🎥 Zoomlike</h1>
+        <p class="tagline">Video meetings with a shared whiteboard.</p>
+
+        <div class="signed-in">
+          <span>Signed in as <strong id="whoami">…</strong></span>
+          <button id="logoutBtn" class="ghost small" type="button">Log out</button>
+        </div>
+
+        <input id="nameInput" type="hidden" />
 
         <label class="field">
           <span>Room name</span>

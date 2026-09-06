@@ -2,10 +2,11 @@
 // Emits parsed messages by `type` and auto-reconnects with backoff.
 
 export class Signaling extends EventTarget {
-  constructor(roomId, name) {
+  constructor(roomId, name, token) {
     super();
     this.roomId = roomId;
     this.name = name;
+    this.token = token || "";
     this.ws = null;
     this.selfId = null;
     this.closed = false;
@@ -14,7 +15,7 @@ export class Signaling extends EventTarget {
 
   connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}/api/room/${encodeURIComponent(this.roomId)}/ws?name=${encodeURIComponent(this.name)}`;
+    const url = `${proto}://${location.host}/api/room/${encodeURIComponent(this.roomId)}/ws?name=${encodeURIComponent(this.name)}&token=${encodeURIComponent(this.token)}`;
     const ws = new WebSocket(url);
     this.ws = ws;
 

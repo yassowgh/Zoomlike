@@ -17,14 +17,25 @@ not_found_handling = "single-page-application"
 name = "ROOMS"
 class_name = "RoomDurableObject"
 
+# Single global instance storing user accounts (email + hashed password).
+[[durable_objects.bindings]]
+name = "AUTH"
+class_name = "AuthDurableObject"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomDurableObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["AuthDurableObject"]
 
 # ---------------------------------------------------------------------------
 # Optional configuration. Set these in the Cloudflare dashboard (Settings ->
 # Variables) or with `wrangler secret put` so they are not committed to git.
 #
+# AUTH_SECRET          : secret used to sign login sessions (JWT). Set a long
+#                        random value with `wrangler secret put AUTH_SECRET`.
 # RECORDING_UPLOAD_URL : your own server endpoint that accepts a POST
 #                        multipart upload of the recorded .webm file.
 # TURN_URLS            : comma-separated TURN server URLs (optional, improves

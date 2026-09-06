@@ -22,10 +22,16 @@ const el = {
   recBtn: $("recBtn"), chatBtn: $("chatBtn"), leaveBtn: $("leaveBtn"),
   chat: $("chat"), chatLog: $("chatLog"), chatForm: $("chatForm"),
   chatInput: $("chatInput"), chatClose: $("chatClose"), toast: $("toast"),
+  // auth
+  auth: $("auth"), authForm: $("authForm"), authName: $("authName"),
+  authEmail: $("authEmail"), authPassword: $("authPassword"), authSubmit: $("authSubmit"),
+  authHint: $("authHint"), authTagline: $("authTagline"), nameField: $("nameField"),
+  tabLogin: $("tabLogin"), tabRegister: $("tabRegister"),
+  whoami: $("whoami"), logoutBtn: $("logoutBtn"),
 };
 
 const state = {
-  name: "", roomId: "", config: null,
+  name: "", email: "", token: "", roomId: "", config: null,
   sig: null, mesh: null, board: null, recorder: null,
   localStream: null, camTrack: null, screenTrack: null,
   peerNames: new Map(), tiles: new Map(),
@@ -45,15 +51,95 @@ function roomFromUrl() {
   return new URLSearchParams(location.search).get("room") || "";
 }
 
+// ------------------------------------------------------------------ auth
+async function initAuth() {
+  wireAuthForm();
+  const token = localStorage.getItem("zl_token") || "";
+  if (token) {
+    try {
+      const r = await fetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } });
+      if (r.ok) { const me = await r.json(); return enterLobby({ ...me, token }); }
+    } catch {}
+    localStorage.removeItem("zl_token");
+  }
+  showAuth();
+}
+
+function showAuth() {
+  el.auth.hidden = false; el.lobby.hidden = true; el.room.hidden = true;
+  el.authEmail.focus();
+}
+
+let authMode = "login";
+function wireAuthForm() {
+  const setMode = (mode) => {
+    authMode = mode;
+    const reg = mode === "register";
+    el.tabLogin.classList.toggle("active", !reg);
+    el.tabRegister.classList.toggle("active", reg);
+    el.nameField.hidden = !reg;
+    el.authName.required = reg;
+    el.authSubmit.textContent = reg ? "Create account" : "Log in";
+    el.authTagline.textContent = reg ? "Create an account to start meeting." : "Log in to start meeting.";
+    el.authPassword.autocomplete = reg ? "new-password" : "current-password";
+    el.authHint.textContent = "";
+  };
+  el.tabLogin.onclick = () => setMode("login");
+  el.tabRegister.onclick = () => setMode("register");
+
+  el.authForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const email = el.authEmail.value.trim();
+    const password = el.authPassword.value;
+    const name = el.authName.value.trim();
+    if (!email || !password) return;
+    el.authSubmit.disabled = true;
+    el.authHint.textContent = authMode === "register" ? "Creating account…" : "Logging in…";
+    try {
+      const r = await fetch("/api/auth/" + authMode, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
+      });
+      const data = await r.json();
+      if (!r.ok) { el.authHint.textContent = data.error || "Something went wrong."; return; }
+      localStorage.setItem("zl_token", data.token);
+      enterLobby(data);
+    } catch {
+      el.authHint.textContent = "Network error. Please try again.";
+    } finally {
+      el.authSubmit.disabled = false;
+    }
+  };
+}
+
+function enterLobby(account) {
+  state.name = account.name; state.email = account.email; state.token = account.token;
+  el.whoami.textContent = account.name;
+  el.nameInput.value = account.name;
+  el.auth.hidden = true; el.lobby.hidden = false; el.room.hidden = true;
+  initLobby();
+}
+
+function logout() {
+  localStorage.removeItem("zl_token");
+  state.token = ""; state.name = ""; state.email = "";
+  location.href = "/";
+}
+
+// ----------------------------------------------------------------- lobby
+let lobbyWired = false;
 function initLobby() {
-  el.nameInput.value = localStorage.getItem("zl_name") || "";
   const urlRoom = roomFromUrl();
   el.roomInput.value = urlRoom || randomRoom();
-  el.randomRoomBtn.onclick = () => (el.roomInput.value = randomRoom());
-  el.joinBtn.onclick = join;
-  el.roomInput.addEventListener("keydown", (e) => e.key === "Enter" && join());
-  el.nameInput.addEventListener("keydown", (e) => e.key === "Enter" && join());
-  if (urlRoom && el.nameInput.value) join();
+  if (!lobbyWired) {
+    lobbyWired = true;
+    el.randomRoomBtn.onclick = () => (el.roomInput.value = randomRoom());
+    el.joinBtn.onclick = join;
+    el.logoutBtn.onclick = logout;
+    el.roomInput.addEventListener("keydown", (e) => e.key === "Enter" && join());
+  }
+  if (urlRoom) join();
 }
 
 // ----------------------------------------------------------------- join
@@ -242,7 +328,7 @@ function leave() {
 
 // ------------------------------------------------------------ signaling
 function connect() {
-  const sig = new Signaling(state.roomId, state.name);
+  const sig = new Signaling(state.roomId, state.name, state.token);
   state.sig = sig;
 
   const mesh = new Mesh({
@@ -351,4 +437,4 @@ function colorFor(id) {
   return `hsl(${h}, 80%, 60%)`;
 }
 
-initLobby();
+initAuth();
