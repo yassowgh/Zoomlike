@@ -49,6 +49,7 @@ export class Whiteboard {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = this.wrap.clientWidth;
     const h = this.wrap.clientHeight;
+    if (w === 0 || h === 0) return; // hidden (e.g. gallery view); keep last state
     for (const c of [this.board, this.overlay]) {
       c.width = Math.round(w * dpr);
       c.height = Math.round(h * dpr);
@@ -99,7 +100,10 @@ export class Whiteboard {
 
   // ---- pointer handling ----------------------------------------------
   _bindPointer() {
-    const el = this.overlay.parentElement; // board-wrap receives events
+    // Bind to the overlay canvas only (NOT the whole board-wrap), so the
+    // toolbar buttons, colour picker and sliders that sit above it stay
+    // clickable instead of being swallowed by pointer capture.
+    const el = this.overlay;
     el.style.touchAction = "none";
     el.addEventListener("pointerdown", (e) => this._down(e));
     el.addEventListener("pointermove", (e) => this._move(e));
@@ -116,7 +120,7 @@ export class Whiteboard {
   _down(e) {
     if (e.button === 2) return; // ignore right-click
     const [x, y] = this._pos(e);
-    this.wrap.setPointerCapture?.(e.pointerId);
+    this.overlay.setPointerCapture?.(e.pointerId);
 
     if (this.tool === "eraser") {
       const hit = this._hitTest(x, y);

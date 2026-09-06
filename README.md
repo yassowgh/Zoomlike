@@ -125,5 +125,6 @@ Then set `RECORDING_UPLOAD_URL=https://your-server.example/upload`.
 
 ## Limitations / honest notes
 - Mesh video is intended for small groups; use Cloudflare Realtime for large calls (see Scaling note).
-- No authentication yet — anyone with the room link can join. Add Firebase Auth or Cloudflare Access if you need gated rooms.
+- Accounts use email + password (Cloudflare-native, hashed). Invited people can join a room as a guest without registering.
+- Cross-network video uses a free public TURN relay (Open Relay) by default; for heavy/production use set your own `TURN_*` (e.g. Cloudflare Realtime TURN).
 - Recording captures the **whiteboard + audio** (not a grid of every camera). That's the most useful artifact for a whiteboard-first tool and keeps it lightweight; a full composite is a possible enhancement.

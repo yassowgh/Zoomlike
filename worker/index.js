@@ -26,7 +26,14 @@ export default {
     if (url.pathname === "/api/auth/me") {
       const payload = await readToken(bearer(request), secret);
       if (!payload) return Response.json({ error: "Not authenticated" }, { status: 401 });
-      return Response.json({ email: payload.email, name: payload.name });
+      return Response.json({ email: payload.email, name: payload.name, guest: !!payload.guest });
+    }
+    // Guest access: invited people can join without creating an account.
+    if (url.pathname === "/api/auth/guest") {
+      const body = await request.json().catch(() => ({}));
+      const name = (body.name || "Guest").toString().trim().slice(0, 40) || "Guest";
+      const token = await issueToken({ email: "guest:" + crypto.randomUUID(), name, guest: true }, secret);
+      return Response.json({ email: "", name, guest: true, token });
     }
 
     // ---- Public config --------------------------------------------------
@@ -72,7 +79,12 @@ function bearer(request) {
 }
 
 function buildIceServers(env) {
-  const servers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+  const servers = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ];
+
+  // Custom TURN (from env) takes priority when configured.
   const turnUrls = (env.TURN_URLS || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (turnUrls.length) {
     servers.push({
@@ -80,6 +92,12 @@ function buildIceServers(env) {
       username: env.TURN_USERNAME || undefined,
       credential: env.TURN_CREDENTIAL || undefined,
     });
+  } else {
+    // Free public TURN relay (Open Relay) so people on different networks /
+    // behind strict NATs can still connect out of the box. For heavy use,
+    // set your own TURN via the TURN_* variables (e.g. Cloudflare Realtime TURN).
+    const openRelay = ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"];
+    servers.push({ urls: openRelay, username: "openrelayproject", credential: "openrelayproject" });
   }
   return servers;
 }

@@ -13,7 +13,10 @@ const el = {
   randomRoomBtn: $("randomRoomBtn"), joinBtn: $("joinBtn"),
   optCam: $("optCam"), optMic: $("optMic"), lobbyHint: $("lobbyHint"),
   roomTitle: $("roomTitle"), copyLinkBtn: $("copyLinkBtn"),
-  connState: $("connState"), viewToggle: $("viewToggle"),
+  connState: $("connState"), galleryBtn: $("galleryBtn"),
+  bgBtn: $("bgBtn"), bgMenu: $("bgMenu"),
+  confirmLeave: $("confirmLeave"), confirmCancel: $("confirmCancel"), confirmLeaveBtn: $("confirmLeaveBtn"),
+  guestBox: $("guestBox"), guestRoom: $("guestRoom"), guestName: $("guestName"), guestJoin: $("guestJoin"),
   board: $("board"), overlay: $("overlay"), boardWrap: $("boardWrap"),
   videos: $("videos"), toolbar: $("toolbar"),
   colorPick: $("colorPick"), sizePick: $("sizePick"),
@@ -67,6 +70,7 @@ async function initAuth() {
 
 function showAuth() {
   el.auth.hidden = false; el.lobby.hidden = true; el.room.hidden = true;
+  showGuestOption();
   el.authEmail.focus();
 }
 
@@ -111,6 +115,36 @@ function wireAuthForm() {
       el.authSubmit.disabled = false;
     }
   };
+
+  // Guest join (invited people don't have to register).
+  el.guestJoin.onclick = async () => {
+    const name = (el.guestName.value || "Guest").trim().slice(0, 40) || "Guest";
+    el.guestJoin.disabled = true;
+    el.authHint.textContent = "Joining…";
+    try {
+      const r = await fetch("/api/auth/guest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await r.json();
+      if (!r.ok) { el.authHint.textContent = data.error || "Could not join."; return; }
+      enterLobby(data); // guests are not persisted to localStorage
+    } catch {
+      el.authHint.textContent = "Network error. Please try again.";
+    } finally {
+      el.guestJoin.disabled = false;
+    }
+  };
+}
+
+function showGuestOption() {
+  const room = roomFromUrl();
+  if (room) {
+    el.guestBox.hidden = false;
+    el.guestRoom.textContent = room;
+    el.authTagline.textContent = "Log in, register, or join as a guest.";
+  }
 }
 
 function enterLobby(account) {
@@ -125,6 +159,11 @@ function logout() {
   localStorage.removeItem("zl_token");
   state.token = ""; state.name = ""; state.email = "";
   location.href = "/";
+}
+
+function applyBackground(name) {
+  el.boardWrap.dataset.bg = name;
+  localStorage.setItem("zl_bg", name);
 }
 
 // ----------------------------------------------------------------- lobby
@@ -230,8 +269,36 @@ function setupControls() {
   el.camBtn.onclick = () => toggleCam();
   el.shareBtn.onclick = () => toggleShare();
   el.recBtn.onclick = () => toggleRecord();
-  el.leaveBtn.onclick = () => leave();
-  el.viewToggle.onclick = () => el.room.classList.toggle("view-strip");
+
+  // Exit with confirmation.
+  el.leaveBtn.onclick = () => { el.confirmLeave.hidden = false; };
+  el.confirmCancel.onclick = () => { el.confirmLeave.hidden = true; };
+  el.confirmLeaveBtn.onclick = () => leave();
+
+  // Gallery <-> whiteboard view.
+  el.galleryBtn.onclick = () => {
+    const gallery = el.room.classList.toggle("gallery");
+    el.galleryBtn.textContent = gallery ? "🖊️ Whiteboard" : "🔳 Gallery";
+  };
+
+  // Board background picker.
+  applyBackground(localStorage.getItem("zl_bg") || "dark");
+  el.bgBtn.onclick = (e) => { e.stopPropagation(); el.bgMenu.hidden = !el.bgMenu.hidden; };
+  el.bgMenu.querySelectorAll(".bg-swatch").forEach((b) => {
+    b.onclick = () => { applyBackground(b.dataset.bg); el.bgMenu.hidden = true; };
+  });
+  document.addEventListener("click", (e) => {
+    if (!el.bgMenu.hidden && !el.bgMenu.contains(e.target) && e.target !== el.bgBtn) el.bgMenu.hidden = true;
+  });
+
+  // Keyboard: Ctrl/Cmd+Z = undo my last stroke.
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.target.matches("input, textarea")) {
+      e.preventDefault();
+      state.board?.undoMine();
+    }
+  });
+
   el.copyLinkBtn.onclick = async () => {
     const url = `${location.origin}/room/${state.roomId}`;
     try { await navigator.clipboard.writeText(url); toast("Invite link copied"); }

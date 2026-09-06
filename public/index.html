@@ -37,6 +37,16 @@
           <button id="authSubmit" class="primary" type="submit">Log in</button>
         </form>
         <p class="hint" id="authHint"></p>
+
+        <div id="guestBox" class="guest-box" hidden>
+          <div class="or"><span>or</span></div>
+          <p class="invited">You've been invited to <strong id="guestRoom"></strong></p>
+          <label class="field">
+            <span>Your name</span>
+            <input id="guestName" type="text" placeholder="Your name" maxlength="40" autocomplete="name" />
+          </label>
+          <button id="guestJoin" class="ghost" type="button" style="width:100%">Join as guest — no account needed</button>
+        </div>
       </div>
       <footer class="lobby-foot">Your account is stored securely on Cloudflare · passwords are hashed</footer>
     </section>
@@ -86,9 +96,21 @@
         </div>
         <div class="topbar-right">
           <span id="connState" class="pill">connecting…</span>
-          <button id="viewToggle" class="ghost small" type="button">🖼️ View</button>
+          <button id="bgBtn" class="ghost small" type="button" title="Change board background">🎨 Background</button>
+          <button id="galleryBtn" class="ghost small" type="button" title="Switch between whiteboard and gallery">🔳 Gallery</button>
         </div>
       </header>
+
+      <!-- Background picker -->
+      <div id="bgMenu" class="bg-menu" hidden>
+        <button data-bg="dark" class="bg-swatch" style="background:#0e1730" title="Dark"></button>
+        <button data-bg="white" class="bg-swatch" style="background:#ffffff" title="White"></button>
+        <button data-bg="slate" class="bg-swatch" style="background:#334155" title="Slate"></button>
+        <button data-bg="grid" class="bg-swatch bg-grid" title="Grid"></button>
+        <button data-bg="dots" class="bg-swatch bg-dots" title="Dots"></button>
+        <button data-bg="blue" class="bg-swatch" style="background:#0b3d91" title="Blue"></button>
+        <button data-bg="green" class="bg-swatch" style="background:#0f5132" title="Green"></button>
+      </div>
 
       <main class="stage">
         <!-- Whiteboard (primary surface) -->
@@ -119,12 +141,12 @@
 
       <!-- Control bar -->
       <div class="controls">
-        <button id="micBtn" class="ctrl" title="Mute / unmute">🎙️</button>
-        <button id="camBtn" class="ctrl" title="Camera on / off">📷</button>
-        <button id="shareBtn" class="ctrl" title="Share screen">🖥️</button>
-        <button id="recBtn" class="ctrl" title="Record session">⏺️</button>
-        <button id="chatBtn" class="ctrl" title="Chat">💬</button>
-        <button id="leaveBtn" class="ctrl leave" title="Leave">📞</button>
+        <div class="ctrl-item"><button id="micBtn" class="ctrl" title="Mute / unmute">🎙️</button><span class="cl">Mute</span></div>
+        <div class="ctrl-item"><button id="camBtn" class="ctrl" title="Camera on / off">📷</button><span class="cl">Camera</span></div>
+        <div class="ctrl-item"><button id="shareBtn" class="ctrl" title="Share your screen">🖥️</button><span class="cl">Share</span></div>
+        <div class="ctrl-item"><button id="recBtn" class="ctrl" title="Record the session">⏺️</button><span class="cl">Record</span></div>
+        <div class="ctrl-item"><button id="chatBtn" class="ctrl" title="Chat">💬</button><span class="cl">Chat</span></div>
+        <div class="ctrl-item"><button id="leaveBtn" class="ctrl leave" title="Leave meeting">✕</button><span class="cl">Leave</span></div>
       </div>
 
       <!-- Chat drawer -->
@@ -135,6 +157,18 @@
           <input id="chatInput" type="text" placeholder="Message…" maxlength="2000" autocomplete="off" />
           <button class="primary small" type="submit">Send</button>
         </form>
+      </div>
+
+      <!-- Leave confirmation -->
+      <div id="confirmLeave" class="modal" hidden>
+        <div class="modal-card">
+          <h3>Leave this meeting?</h3>
+          <p>You'll be disconnected from the room. You can rejoin with the same link.</p>
+          <div class="modal-actions">
+            <button id="confirmCancel" class="ghost" type="button">Cancel</button>
+            <button id="confirmLeaveBtn" class="danger-btn" type="button">Leave</button>
+          </div>
+        </div>
       </div>
 
       <div id="toast" class="toast" hidden></div>

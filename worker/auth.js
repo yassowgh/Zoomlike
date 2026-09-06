@@ -57,6 +57,7 @@ export class AuthDurableObject {
 
 export async function issueToken(user, secret) {
   const payload = { email: user.email, name: user.name, exp: Date.now() + TOKEN_TTL_MS };
+  if (user.guest) payload.guest = true;
   return signJWT(payload, secret);
 }
 
