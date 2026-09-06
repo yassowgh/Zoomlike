@@ -11,28 +11,36 @@
   </head>
   <body>
     <!-- ============================ AUTH ============================ -->
-    <section id="auth" class="lobby" hidden>
-      <div class="lobby-card">
-        <h1>🎥 Zoomlike</h1>
-        <p class="tagline" id="authTagline">Log in to start meeting.</p>
+    <section id="auth" class="auth-screen" hidden>
+      <div class="auth-card">
+        <div class="brand">
+          <div class="brand-logo">🎥</div>
+          <div>
+            <div class="brand-name">Zoomlike</div>
+            <div class="brand-sub" id="authTagline">Log in to start meeting.</div>
+          </div>
+        </div>
 
         <div class="tabs">
           <button id="tabLogin" class="tab active" type="button">Log in</button>
           <button id="tabRegister" class="tab" type="button">Register</button>
         </div>
 
-        <form id="authForm">
+        <form id="authForm" novalidate>
           <label class="field" id="nameField" hidden>
             <span>Full name</span>
             <input id="authName" type="text" placeholder="Your name" autocomplete="name" maxlength="40" />
           </label>
           <label class="field">
             <span>Email</span>
-            <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" required />
+            <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" inputmode="email" required />
           </label>
           <label class="field">
             <span>Password</span>
-            <input id="authPassword" type="password" placeholder="At least 6 characters" autocomplete="current-password" required />
+            <div class="pw-wrap">
+              <input id="authPassword" type="password" placeholder="At least 6 characters" autocomplete="current-password" required />
+              <button id="pwToggle" class="pw-toggle" type="button" tabindex="-1" aria-label="Show password">👁️</button>
+            </div>
           </label>
           <button id="authSubmit" class="primary" type="submit">Log in</button>
         </form>
@@ -144,18 +152,55 @@
         <div class="ctrl-item"><button id="micBtn" class="ctrl" title="Mute / unmute">🎙️</button><span class="cl">Mute</span></div>
         <div class="ctrl-item"><button id="camBtn" class="ctrl" title="Camera on / off">📷</button><span class="cl">Camera</span></div>
         <div class="ctrl-item"><button id="shareBtn" class="ctrl" title="Share your screen">🖥️</button><span class="cl">Share</span></div>
-        <div class="ctrl-item"><button id="recBtn" class="ctrl" title="Record the session">⏺️</button><span class="cl">Record</span></div>
+        <div class="ctrl-item"><button id="handBtn" class="ctrl" title="Raise / lower hand">✋</button><span class="cl">Hand</span></div>
+        <div class="ctrl-item ctrl-pop">
+          <button id="reactBtn" class="ctrl" title="Send a reaction">😀</button><span class="cl">React</span>
+          <div id="reactMenu" class="pop-menu react-menu" hidden>
+            <button data-emoji="👍">👍</button><button data-emoji="👏">👏</button>
+            <button data-emoji="❤️">❤️</button><button data-emoji="😂">😂</button>
+            <button data-emoji="🎉">🎉</button><button data-emoji="😮">😮</button>
+          </div>
+        </div>
+        <div class="ctrl-item ctrl-pop">
+          <button id="recBtn" class="ctrl" title="Record the session">⏺️</button><span class="cl">Record</span>
+          <div id="recMenu" class="pop-menu" hidden>
+            <button data-target="computer">💾 Save on this computer…</button>
+            <button data-target="server" id="recServerOpt">☁️ Upload to my server</button>
+          </div>
+        </div>
+        <div class="ctrl-item"><button id="peopleBtn" class="ctrl" title="Participants">👥</button><span class="cl">People</span></div>
         <div class="ctrl-item"><button id="chatBtn" class="ctrl" title="Chat">💬</button><span class="cl">Chat</span></div>
         <div class="ctrl-item"><button id="leaveBtn" class="ctrl leave" title="Leave meeting">✕</button><span class="cl">Leave</span></div>
       </div>
 
+      <!-- Reaction overlay (floating emojis) -->
+      <div id="reactionLayer" class="reaction-layer"></div>
+
+      <!-- Participants panel -->
+      <div id="people" class="side-panel" hidden>
+        <div class="side-head">
+          <strong>Participants (<span id="peopleCount">1</span>)</strong>
+          <div>
+            <button id="muteAllBtn" class="ghost small host-only" hidden type="button">🔇 Mute all</button>
+            <button id="peopleClose" class="ghost small" type="button">✕</button>
+          </div>
+        </div>
+        <div id="peopleList" class="people-list"></div>
+      </div>
+
       <!-- Chat drawer -->
-      <div id="chat" class="chat" hidden>
-        <div class="chat-head"><strong>Chat</strong><button id="chatClose" class="ghost small">✕</button></div>
+      <div id="chat" class="side-panel chat" hidden>
+        <div class="side-head"><strong>Chat</strong><button id="chatClose" class="ghost small">✕</button></div>
         <div id="chatLog" class="chat-log"></div>
         <form id="chatForm" class="chat-form">
-          <input id="chatInput" type="text" placeholder="Message…" maxlength="2000" autocomplete="off" />
-          <button class="primary small" type="submit">Send</button>
+          <div class="chat-to">
+            <span>To:</span>
+            <select id="chatTo" class="chat-select"><option value="">Everyone</option></select>
+          </div>
+          <div class="chat-row">
+            <input id="chatInput" type="text" placeholder="Type a message…" maxlength="2000" autocomplete="off" />
+            <button class="primary small" type="submit">Send</button>
+          </div>
         </form>
       </div>
 

@@ -30,7 +30,13 @@ const el = {
   authEmail: $("authEmail"), authPassword: $("authPassword"), authSubmit: $("authSubmit"),
   authHint: $("authHint"), authTagline: $("authTagline"), nameField: $("nameField"),
   tabLogin: $("tabLogin"), tabRegister: $("tabRegister"),
-  whoami: $("whoami"), logoutBtn: $("logoutBtn"),
+  whoami: $("whoami"), logoutBtn: $("logoutBtn"), pwToggle: $("pwToggle"),
+  // meeting features
+  handBtn: $("handBtn"), reactBtn: $("reactBtn"), reactMenu: $("reactMenu"),
+  recMenu: $("recMenu"), recServerOpt: $("recServerOpt"), reactionLayer: $("reactionLayer"),
+  peopleBtn: $("peopleBtn"), people: $("people"), peopleClose: $("peopleClose"),
+  peopleList: $("peopleList"), peopleCount: $("peopleCount"), muteAllBtn: $("muteAllBtn"),
+  chatTo: $("chatTo"),
 };
 
 const state = {
@@ -39,7 +45,9 @@ const state = {
   localStream: null, camTrack: null, screenTrack: null,
   peerNames: new Map(), tiles: new Map(),
   micOn: true, camOn: true, sharing: false,
+  selfId: "", host: "", peers: new Map(), hand: false, recTarget: "computer",
 };
+const isHost = () => state.selfId && state.selfId === state.host;
 
 // ---------------------------------------------------------------- lobby
 function randomRoom() {
@@ -90,6 +98,12 @@ function wireAuthForm() {
   };
   el.tabLogin.onclick = () => setMode("login");
   el.tabRegister.onclick = () => setMode("register");
+
+  el.pwToggle.onclick = () => {
+    const show = el.authPassword.type === "password";
+    el.authPassword.type = show ? "text" : "password";
+    el.pwToggle.textContent = show ? "🙈" : "👁️";
+  };
 
   el.authForm.onsubmit = async (e) => {
     e.preventDefault();
@@ -268,7 +282,51 @@ function setupControls() {
   el.micBtn.onclick = () => toggleMic();
   el.camBtn.onclick = () => toggleCam();
   el.shareBtn.onclick = () => toggleShare();
-  el.recBtn.onclick = () => toggleRecord();
+
+  // Raise / lower hand.
+  el.handBtn.onclick = () => {
+    state.hand = !state.hand;
+    el.handBtn.classList.toggle("on", state.hand);
+    state.sig?.send({ type: "hand", up: state.hand });
+    setTileHand("self", state.hand);
+    renderPeople();
+  };
+
+  // Reactions.
+  el.reactBtn.onclick = (e) => { e.stopPropagation(); el.reactMenu.hidden = !el.reactMenu.hidden; };
+  el.reactMenu.querySelectorAll("button").forEach((b) => {
+    b.onclick = () => {
+      state.sig?.send({ type: "react", emoji: b.dataset.emoji });
+      showReaction(state.name, b.dataset.emoji);
+      el.reactMenu.hidden = true;
+    };
+  });
+
+  // Recording with a destination menu.
+  if (!state.config?.recordingUploadUrl) el.recServerOpt.disabled = true;
+  el.recBtn.onclick = (e) => {
+    e.stopPropagation();
+    if (state.recorder.recording) return stopRecording();
+    el.recMenu.hidden = !el.recMenu.hidden;
+  };
+  el.recMenu.querySelectorAll("button").forEach((b) => {
+    b.onclick = () => { el.recMenu.hidden = true; startRecording(b.dataset.target); };
+  });
+
+  // Participants panel.
+  el.peopleBtn.onclick = () => { el.people.hidden = !el.people.hidden; renderPeople(); };
+  el.peopleClose.onclick = () => (el.people.hidden = true);
+  el.muteAllBtn.onclick = () => {
+    if (!isHost()) return;
+    state.sig?.send({ type: "host-mute", target: "all" });
+    toast("Muted everyone");
+  };
+
+  // Close popovers on outside click.
+  document.addEventListener("click", (e) => {
+    if (!el.reactMenu.hidden && !el.reactMenu.contains(e.target) && e.target !== el.reactBtn) el.reactMenu.hidden = true;
+    if (!el.recMenu.hidden && !el.recMenu.contains(e.target) && e.target !== el.recBtn) el.recMenu.hidden = true;
+  });
 
   // Exit with confirmation.
   el.leaveBtn.onclick = () => { el.confirmLeave.hidden = false; };
@@ -311,8 +369,10 @@ function setupControls() {
     e.preventDefault();
     const text = el.chatInput.value.trim();
     if (!text) return;
-    state.sig?.send({ type: "chat", text });
-    addChat(state.name, text, true);
+    const to = el.chatTo.value || null;
+    state.sig?.send({ type: "chat", text, to });
+    const toName = to ? state.peers.get(to)?.name : null;
+    addChat(state.name, text, true, toName);
     el.chatInput.value = "";
   };
 
@@ -328,7 +388,7 @@ async function toggleMic() {
       state.mesh?.peers.forEach(({ pc }) => pc.addTrack(a, state.localStream));
     } catch { toast("Microphone unavailable"); return; }
   }
-  state.micOn = !state.micOn; applyTrackState();
+  state.micOn = !state.micOn; applyTrackState(); broadcastMedia();
 }
 
 async function toggleCam() {
@@ -341,7 +401,14 @@ async function toggleCam() {
       refreshSelfTile();
     } catch { toast("Camera unavailable"); return; }
   }
-  state.camOn = !state.camOn; applyTrackState();
+  state.camOn = !state.camOn; applyTrackState(); broadcastMedia();
+}
+
+function broadcastMedia() {
+  state.sig?.send({ type: "media", mic: state.micOn, cam: state.camOn });
+  const self = state.tiles.get("self");
+  if (self) self.div.classList.toggle("muted", !state.micOn);
+  renderPeople();
 }
 
 async function toggleShare() {
@@ -368,21 +435,33 @@ function stopShare() {
   refreshSelfTile();
 }
 
-async function toggleRecord() {
-  const r = state.recorder;
-  if (!r.recording) {
-    const audio = [state.localStream, ...[...state.tiles.values()].map((t) => t.stream)].filter(Boolean);
-    r.start(el.board, audio);
-    el.recBtn.classList.add("rec-on");
-    el.connState.classList.add("rec"); el.connState.textContent = "● recording";
-    toast("Recording started");
-  } else {
-    el.recBtn.classList.remove("rec-on");
-    el.connState.classList.remove("rec");
-    el.connState.textContent = "connected"; el.connState.classList.add("ok");
-    const res = await r.stop(state.roomId);
-    toast(res?.uploaded ? "Recording uploaded to your server" : "Recording saved (downloaded)");
-  }
+function startRecording(target) {
+  state.recTarget = target === "server" ? "server" : "computer";
+  const audio = [state.localStream, ...[...state.tiles.values()].map((t) => t.stream)].filter(Boolean);
+  const bgColors = { dark: "#0e1730", white: "#ffffff", slate: "#334155", blue: "#0b3d91", green: "#0f5132", grid: "#12203f", dots: "#12203f" };
+  state.recorder.start({
+    boardCanvas: el.board,
+    tiles: () => [...state.tiles.values()].map((t) => ({ video: t.video, label: t.label.textContent })),
+    bgColor: bgColors[el.boardWrap.dataset.bg] || "#0e1730",
+    audioStreams: audio,
+  });
+  el.recBtn.classList.add("rec-on");
+  el.connState.classList.add("rec"); el.connState.textContent = "● recording";
+  toast(state.recTarget === "server" ? "Recording… will upload to your server" : "Recording… you'll choose where to save");
+}
+
+async function stopRecording() {
+  el.recBtn.classList.remove("rec-on");
+  el.connState.classList.remove("rec");
+  el.connState.textContent = "connected"; el.connState.classList.add("ok");
+  const res = await state.recorder.stop(state.roomId, state.recTarget);
+  const msg = {
+    server: "Recording uploaded to your server ✓",
+    chosen: "Recording saved ✓",
+    downloads: "Recording saved to Downloads ✓",
+    cancelled: "Save cancelled — recording discarded",
+  }[res?.where] || "Recording saved";
+  toast(msg);
 }
 
 function leave() {
@@ -411,23 +490,64 @@ function connect() {
   sig.addEventListener("close", () => { el.connState.textContent = "reconnecting…"; el.connState.classList.remove("ok"); });
 
   sig.addEventListener("welcome", (e) => {
-    const { self, peers, board } = e.detail;
+    const { self, host, peers, board } = e.detail;
+    state.selfId = self; state.host = host;
     mesh.setSelf(self);
     state.board.loadShapes(board);
-    for (const p of peers) { state.peerNames.set(p.id, p.name); mesh.addPeer(p.id, p.name); }
+    for (const p of peers) {
+      state.peerNames.set(p.id, p.name);
+      state.peers.set(p.id, { name: p.name, mic: true, cam: true, hand: false });
+      mesh.addPeer(p.id, p.name);
+    }
+    updateHostUI(); renderPeople(); refreshChatTo();
+    broadcastMedia();
   });
 
   sig.addEventListener("peer-join", (e) => {
     const { id, name } = e.detail;
     state.peerNames.set(id, name);
+    state.peers.set(id, { name, mic: true, cam: true, hand: false });
     mesh.addPeer(id, name);
+    renderPeople(); refreshChatTo();
     toast(`${name} joined`);
   });
 
   sig.addEventListener("peer-leave", (e) => {
-    const name = state.peerNames.get(e.detail.id);
+    const p = state.peers.get(e.detail.id);
     mesh.removePeer(e.detail.id);
-    if (name) toast(`${name} left`);
+    state.peers.delete(e.detail.id);
+    renderPeople(); refreshChatTo();
+    if (p) toast(`${p.name} left`);
+  });
+
+  sig.addEventListener("host", (e) => { state.host = e.detail.id; updateHostUI(); renderPeople(); });
+
+  sig.addEventListener("media", (e) => {
+    const p = state.peers.get(e.detail.id);
+    if (p) { p.mic = e.detail.mic; p.cam = e.detail.cam; }
+    const t = state.tiles.get(e.detail.id);
+    if (t) t.div.classList.toggle("muted", !e.detail.mic);
+    renderPeople();
+  });
+
+  sig.addEventListener("hand", (e) => {
+    const p = state.peers.get(e.detail.id);
+    if (p) p.hand = e.detail.up;
+    setTileHand(e.detail.id, e.detail.up);
+    renderPeople();
+    if (e.detail.up) toast(`✋ ${e.detail.name} raised their hand`);
+  });
+
+  sig.addEventListener("react", (e) => showReaction(e.detail.name, e.detail.emoji));
+
+  sig.addEventListener("force-mute", (e) => {
+    if (state.micOn) { state.micOn = false; applyTrackState(); broadcastMedia(); }
+    toast(`🔇 You were muted by ${e.detail.by}`);
+  });
+
+  sig.addEventListener("removed", (e) => {
+    alert(`You were removed from the meeting by ${e.detail.by}.`);
+    leave();
   });
 
   sig.addEventListener("signal", (e) => mesh.handleSignal(e.detail.from, e.detail.name, e.detail.data));
@@ -438,7 +558,7 @@ function connect() {
     const { id, name, x, y } = e.detail;
     state.board.showCursor(id, name, x, y, colorFor(id));
   });
-  sig.addEventListener("chat", (e) => addChat(e.detail.name, e.detail.text, false));
+  sig.addEventListener("chat", (e) => addChat(e.detail.name, e.detail.text, false, null, !!e.detail.to));
 
   sig.connect();
 }
@@ -462,7 +582,21 @@ function addTile(id, name, stream, isSelf = false) {
   tile.video.srcObject = stream;
   tile.label.textContent = name + (isSelf ? " (you)" : "");
   tile.video.play?.().catch(() => {});
+  // Reflect current roster state.
+  const info = isSelf ? { mic: state.micOn, hand: state.hand } : state.peers.get(id);
+  if (info) { tile.div.classList.toggle("muted", !info.mic); if (info.hand) setTileHand(id, true); }
+  refreshTileHostBadges();
   return tile;
+}
+
+function refreshTileHostBadges() {
+  for (const [id, t] of state.tiles) {
+    const realId = id === "self" ? state.selfId : id;
+    let b = t.div.querySelector(".host-badge");
+    if (realId && realId === state.host) {
+      if (!b) { b = document.createElement("span"); b.className = "host-badge"; b.textContent = "Host"; t.div.appendChild(b); }
+    } else if (b) b.remove();
+  }
 }
 function removeTile(id) {
   const t = state.tiles.get(id);
@@ -474,15 +608,94 @@ function refreshSelfTile(stream) {
 }
 
 // ---------------------------------------------------------------- chat
-function addChat(who, text, me) {
+function addChat(who, text, me, toName = null, isPrivate = false) {
   const div = document.createElement("div");
-  div.className = "chat-msg" + (me ? " me" : "");
-  div.innerHTML = `<div class="who"></div><div class="body"></div>`;
-  div.querySelector(".who").textContent = me ? "You" : who;
-  div.querySelector(".body").textContent = text;
+  div.className = "chat-msg" + (me ? " me" : "") + (isPrivate ? " private" : "");
+  const whoEl = document.createElement("div"); whoEl.className = "who";
+  whoEl.textContent = me ? (toName ? `You → ${toName}` : "You") : who;
+  if (isPrivate) { const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = "private"; whoEl.appendChild(tag); }
+  const body = document.createElement("div"); body.className = "body"; body.textContent = text;
+  div.append(whoEl, body);
   el.chatLog.appendChild(div);
   el.chatLog.scrollTop = el.chatLog.scrollHeight;
-  if (me === false && el.chat.hidden) toast(`💬 ${who}: ${text.slice(0, 40)}`);
+  if (!me && el.chat.hidden) toast(`💬 ${who}${isPrivate ? " (private)" : ""}: ${text.slice(0, 40)}`);
+}
+
+// ----------------------------------------------------- participants panel
+function renderPeople() {
+  if (!el.peopleList) return;
+  const rows = [];
+  rows.push(personRow(state.selfId || "self", state.name, { mic: state.micOn, cam: state.camOn, hand: state.hand }, true));
+  for (const [id, p] of state.peers) rows.push(personRow(id, p.name, p, false));
+  el.peopleList.innerHTML = "";
+  rows.forEach((r) => el.peopleList.appendChild(r));
+  el.peopleCount.textContent = String(1 + state.peers.size);
+}
+
+function personRow(id, name, s, self) {
+  const row = document.createElement("div");
+  row.className = "prow";
+  const nm = document.createElement("span");
+  nm.className = "pname";
+  nm.textContent = name + (self ? " (you)" : "");
+  row.appendChild(nm);
+  if (id === state.host) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "Host"; row.appendChild(b); }
+  if (s.hand) { const h = document.createElement("span"); h.className = "pstate hand-up"; h.textContent = "✋"; row.appendChild(h); }
+  const st = document.createElement("span"); st.className = "pstate"; st.textContent = (s.mic ? "🎙️" : "🔇") + (s.cam ? "" : "🚫"); row.appendChild(st);
+
+  if (!self) {
+    const dm = document.createElement("button");
+    dm.className = "pact"; dm.textContent = "Message";
+    dm.onclick = () => { el.chatTo.value = id; el.chat.hidden = false; el.people.hidden = true; el.chatInput.focus(); };
+    row.appendChild(dm);
+    if (isHost()) {
+      const mute = document.createElement("button");
+      mute.className = "pact"; mute.textContent = "Mute";
+      mute.onclick = () => state.sig?.send({ type: "host-mute", target: id });
+      row.appendChild(mute);
+      const rm = document.createElement("button");
+      rm.className = "pact"; rm.textContent = "Remove";
+      rm.onclick = () => { if (confirm(`Remove ${name}?`)) state.sig?.send({ type: "host-remove", target: id }); };
+      row.appendChild(rm);
+    }
+  }
+  return row;
+}
+
+function updateHostUI() {
+  el.muteAllBtn.hidden = !isHost();
+  refreshTileHostBadges();
+}
+
+function refreshChatTo() {
+  const cur = el.chatTo.value;
+  el.chatTo.innerHTML = '<option value="">Everyone</option>';
+  for (const [id, p] of state.peers) {
+    const o = document.createElement("option");
+    o.value = id; o.textContent = p.name;
+    el.chatTo.appendChild(o);
+  }
+  if ([...el.chatTo.options].some((o) => o.value === cur)) el.chatTo.value = cur;
+}
+
+function setTileHand(id, up) {
+  const t = state.tiles.get(id === state.selfId ? "self" : id) || state.tiles.get(id);
+  if (!t) return;
+  let h = t.div.querySelector(".hand");
+  if (up) {
+    if (!h) { h = document.createElement("span"); h.className = "hand"; h.textContent = "✋"; t.div.appendChild(h); }
+  } else if (h) h.remove();
+}
+
+function showReaction(name, emoji) {
+  const d = document.createElement("div");
+  d.className = "reaction";
+  d.style.left = 20 + Math.random() * 60 + "%";
+  d.innerHTML = `<div>${emoji}</div>`;
+  const n = document.createElement("span"); n.className = "rname"; n.textContent = name;
+  d.appendChild(n);
+  el.reactionLayer.appendChild(d);
+  setTimeout(() => d.remove(), 3000);
 }
 
 // -------------------------------------------------------------- helpers
