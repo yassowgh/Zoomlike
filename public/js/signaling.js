@@ -2,12 +2,15 @@
 // Emits parsed messages by `type` and auto-reconnects with backoff.
 
 export class Signaling extends EventTarget {
-  constructor(roomId, name, token, skip) {
+  constructor(roomId, name, token, skip, helloExtra) {
     super();
     this.roomId = roomId;
     this.name = name;
     this.token = token || "";
     this.skip = skip ? "1" : "";
+    // Extra fields sent with the opening `hello` (e.g. the access mode chosen
+    // when this join is the one that creates the room).
+    this.helloExtra = helloExtra || {};
     this.ws = null;
     this.selfId = null;
     this.closed = false;
@@ -22,7 +25,7 @@ export class Signaling extends EventTarget {
 
     ws.addEventListener("open", () => {
       this.backoff = 1000;
-      this.send({ type: "hello" });
+      this.send({ type: "hello", ...this.helloExtra });
       this.dispatchEvent(new Event("open"));
     });
 

@@ -56,7 +56,13 @@ export class Mesh {
     };
 
     pc.onconnectionstatechange = () => {
-      if (["failed", "closed"].includes(pc.connectionState)) this.removePeer(peerId);
+      const st = pc.connectionState;
+      if (st === "closed") return this.removePeer(peerId);
+      // A failed connection used to be dropped and never retried, leaving the
+      // person in the roster with dead media until one side reloaded. Try to
+      // rebuild it a few times before giving up on them.
+      if (st === "failed") this.recover(peerId);
+      if (st === "connected") entry.retries = 0;
     };
 
     return entry;
@@ -98,9 +104,21 @@ export class Mesh {
   // Swap the outgoing video track everywhere (camera <-> screen share) with
   // no renegotiation needed.
   replaceVideoTrack(track) {
+    this._replace("video", track);
+  }
+
+  // Same for the microphone, so switching to a headset mid-call does not
+  // interrupt anyone.
+  replaceAudioTrack(track) {
+    this._replace("audio", track);
+  }
+
+  _replace(kind, track) {
     for (const { pc } of this.peers.values()) {
-      const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
-      if (sender) sender.replaceTrack(track);
+      // Skip the screen-share sender when looking for the camera.
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === kind &&
+        !(kind === "video" && this.screenStream && s.track === this.screenStream.getVideoTracks()[0]));
+      if (sender) sender.replaceTrack(track).catch((err) => console.warn("replaceTrack failed", err));
     }
   }
 
@@ -121,6 +139,23 @@ export class Mesh {
       if (sender) { try { pc.removeTrack(sender); } catch {} }
     }
     this.screenStream = null;
+  }
+
+  // Rebuild a peer connection that has failed. Re-adding our local tracks
+  // fires onnegotiationneeded, which sends a fresh offer, so the connection
+  // re-establishes itself without waiting for the other side to do anything.
+  recover(peerId) {
+    const entry = this.peers.get(peerId);
+    if (!entry) return;
+    const retries = (entry.retries || 0) + 1;
+    if (retries > 3) return this.removePeer(peerId);
+    const { name } = entry;
+    try { entry.pc.close(); } catch {}
+    this.peers.delete(peerId);
+    // Deliberately not calling onLeave: the tile stays put on its last frame
+    // rather than vanishing and reappearing while we reconnect.
+    const fresh = this.addPeer(peerId, name);
+    fresh.retries = retries;
   }
 
   removePeer(peerId) {

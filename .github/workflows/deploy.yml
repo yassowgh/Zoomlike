@@ -1,5 +1,7 @@
 name: Deploy to Cloudflare
 
+# `main` is the deploy branch. Set it as the repository's default branch in
+# Settings -> Branches so day-to-day merges land here and trigger a deploy.
 on:
   push:
     branches: [main]
@@ -25,3 +27,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

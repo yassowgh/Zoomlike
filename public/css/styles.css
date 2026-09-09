@@ -11,6 +11,8 @@
   --ok: #22c55e;
   --radius: 12px;
   --tap: 44px;
+  /* Measured from the real topbar at runtime (it wraps on narrow screens). */
+  --topbar-h: 52px;
 }
 
 * { box-sizing: border-box; }
@@ -115,7 +117,7 @@ input { font: inherit; }
 .stage { flex: 1; display: flex; min-height: 0; }
 
 /* Whiteboard */
-.board-wrap { position: relative; flex: 1; min-width: 0; background: #0e1730; overflow: hidden; }
+.board-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; background: #0e1730; overflow: hidden; }
 .board { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 /* Overlay is the input surface (on top of the committed-strokes canvas, below
    the toolbar). Giving it pointer-events keeps toolbar clicks working while
@@ -180,13 +182,20 @@ input { font: inherit; }
 }
 .tile.speaking { outline: 2px solid var(--ok); }
 
-/* View mode: videos on top strip instead of side */
-.room.view-strip .stage { flex-direction: column; }
-.room.view-strip .videos {
-  width: auto; flex: 0 0 auto; flex-direction: row; border-left: 0;
-  border-bottom: 1px solid var(--line); order: -1;
+/* ---- Where the participant strip sits (a per-viewer choice) ---- */
+.room[data-strip="right"] .stage { flex-direction: row; }
+.room[data-strip="right"] .videos {
+  width: 220px; flex: 0 0 220px; flex-direction: column;
+  border-left: 1px solid var(--line); border-top: 0; order: 1;
 }
-.room.view-strip .tile { width: 150px; flex: 0 0 150px; }
+.room[data-strip="bottom"] .stage { flex-direction: column; }
+.room[data-strip="bottom"] .videos {
+  width: auto; flex: 0 0 auto; flex-direction: row; border-left: 0;
+  border-top: 1px solid var(--line); order: 1; overflow-x: auto; overflow-y: hidden;
+  min-height: 0;
+}
+.room[data-strip="bottom"] .tile { width: 150px; flex: 0 0 150px; }
+.room[data-strip="hidden"] .videos { display: none; }
 
 /* Controls */
 .controls {
@@ -207,15 +216,25 @@ input { font: inherit; }
 .ctrl-item { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .cl { font-size: 11px; color: var(--muted); }
 
-/* Gallery grid view (Zoom-style) */
-.room.gallery .board-wrap { display: none; }
-.room.gallery .stage { flex-direction: column; }
-.room.gallery .videos {
-  width: auto; flex: 1; border: 0; order: 0;
-  display: grid; gap: 10px; padding: 12px; align-content: center;
+/* Gallery: the participants become the whole stage (overrides the strip
+   rules above by source order, so "hidden" never blanks the gallery). */
+.room[data-layout="gallery"] .stage { flex-direction: column; }
+.room[data-layout="gallery"] .videos {
+  display: grid; width: auto; flex: 1; border: 0; order: 0;
+  gap: 10px; padding: 12px; align-content: center; overflow-y: auto;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
 }
-.room.gallery .tile { aspect-ratio: 16/9; width: auto; }
+.room[data-layout="gallery"] .tile { aspect-ratio: 16/9; width: auto; flex: initial; }
+
+/* Speaker / spotlight main stage */
+.spot-stage { flex: 1; min-width: 0; min-height: 0; overflow: hidden; position: relative;
+  background: #05080f; display: flex; align-items: center; justify-content: center; }
+.spot-stage video { width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; background: #05080f; }
+.spot-label { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 8px;
+  background: rgba(0,0,0,.6); color: #fff; padding: 4px 10px; border-radius: 8px; font-size: 13px; }
+.spot-tag { background: var(--accent); border-radius: 6px; padding: 1px 6px; font-size: 11px; }
+.spot-empty { color: var(--muted); font-size: 14px; }
+.tile.spotlighted { outline: 2px solid var(--accent); }
 
 /* Confirm modal */
 .modal {
@@ -270,16 +289,41 @@ input { font: inherit; }
 .cursor .dot { width: 10px; height: 10px; border-radius: 50%; }
 .cursor .name { background: rgba(0,0,0,.6); border-radius: 6px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }
 
-/* Phone layout */
+/* --------------------------- Phone layout ---------------------------
+   A phone shows only what you need to be in the meeting. Secondary controls
+   collapse behind "More", the drawing tools behind the toolbox button, and
+   the topbar buttons drop their text labels. */
 @media (max-width: 720px) {
-  .videos { width: 120px; flex-basis: 120px; }
-  #roomTitle { max-width: 30vw; }
-  .room:not(.view-strip) .stage { flex-direction: column; }
-  .room:not(.view-strip) .videos {
+  #roomTitle { max-width: 26vw; font-size: 14px; }
+  .btxt { display: none; }
+  .topbar { padding: 6px 8px; gap: 6px; }
+  .topbar-left, .topbar-right { gap: 6px; }
+  .pill { font-size: 11px; padding: 3px 8px; }
+
+  /* A side strip does not fit on a phone — always run it along the bottom. */
+  .room[data-strip="right"] .stage { flex-direction: column; }
+  .room[data-strip="right"] .videos {
     width: auto; flex: 0 0 auto; flex-direction: row; border-left: 0;
-    border-bottom: 1px solid var(--line); order: -1;
+    border-top: 1px solid var(--line); order: 1; overflow-x: auto; overflow-y: hidden;
   }
-  .room:not(.view-strip) .tile { width: 120px; flex: 0 0 120px; }
+  .room[data-strip="right"] .tile { width: 116px; flex: 0 0 116px; }
+  .room[data-strip="bottom"] .tile { width: 116px; flex: 0 0 116px; }
+  .room[data-layout="gallery"] .videos { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
+
+  /* Controls: essentials only until "More" is tapped. */
+  .controls { gap: 4px; padding: 8px 4px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .controls .ctrl-item[data-pri="2"] { display: none; }
+  .controls.expanded .ctrl-item[data-pri="2"] { display: flex; }
+  .ctrl { width: 42px; height: 42px; font-size: 18px; }
+  .cl { font-size: 10px; }
+
+  /* Drawing tools stay out of the way until asked for. */
+  /* Keep clear of the zoom column on the right, or the last tools are hidden. */
+  .toolbar { display: none; left: 8px; right: 56px; transform: none; max-width: none; bottom: 66px; }
+  .board-wrap.tools-open .toolbar { display: flex; }
+  .zoom-ctrls { right: 8px; bottom: 8px; }
+  .zoom-ctrls button { width: 32px; height: 32px; font-size: 16px; }
+  .nodraw-hint { font-size: 11px; padding: 4px 10px; max-width: 90%; }
 }
 
 /* ============================ Auth screen ============================ */
@@ -300,7 +344,8 @@ input { font: inherit; }
 .auth-card .field input:focus, .pw-wrap input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
 /* ============================ Side panels ============================ */
-.side-panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(340px, 92vw);
+/* Panels start below the topbar so View / More / Copy invite stay reachable. */
+.side-panel { position: absolute; right: 0; top: var(--topbar-h); bottom: 0; width: min(340px, 92vw);
   background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; z-index: 30; }
 .side-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
   padding: 12px 14px; border-bottom: 1px solid var(--line); }
@@ -340,6 +385,7 @@ input { font: inherit; }
 .tile .host-badge { position: absolute; top: 6px; right: 6px; font-size: 10px; background: var(--accent); color: #fff; border-radius: 5px; padding: 1px 5px; }
 
 .controls { flex-wrap: wrap; }
+.ctrl-more { display: none; }  /* phones only — see the media query */
 
 /* ---- Waiting room / spinner ---- */
 .modal-card.center { text-align: center; }
@@ -391,8 +437,142 @@ input { font: inherit; }
   background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
 .nodraw-hint { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 5;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); padding: 6px 14px; border-radius: 999px; font-size: 13px; }
-.screen-stage { flex: 1; min-width: 0; position: relative; background: #000; display: flex; align-items: center; justify-content: center; }
-.screen-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.screen-stage { flex: 1; min-width: 0; min-height: 0; overflow: hidden; position: relative;
+  background: #000; display: flex; align-items: center; justify-content: center; }
+.screen-stage video { width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; background: #000; }
 .screen-label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,.6); color: #fff; padding: 4px 10px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .screen-label .ghost { background: rgba(255,255,255,.15); border-color: transparent; color: #fff; }
 .screen-peek { position: absolute; left: 12px; top: 52px; z-index: 26; }
+
+
+/* ==================== Topbar menus, tools, requests ==================== */
+.pop-menu.anchor-right { bottom: auto; top: 42px; left: auto; right: 0; transform: none; }
+.menu-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 6px 12px 2px; }
+.menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+.pop-menu button.active { background: var(--accent); }
+
+/* Toolbox button that reveals the drawing tools on a phone */
+.tools-btn {
+  display: none; position: absolute; left: 12px; bottom: 12px; z-index: 7;
+  width: var(--tap); height: var(--tap); place-items: center; font-size: 20px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 50%; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.tools-btn.on { background: var(--accent); border-color: var(--accent); }
+
+/* Pending share / record requests in the participants panel */
+.req-row { display: flex; align-items: center; gap: 6px; padding: 6px; flex-wrap: wrap; }
+.req-row .rtext { flex: 1; font-size: 13px; min-width: 120px; }
+.pact.approve { background: var(--ok); border-color: var(--ok); color: #04210f; }
+
+/* Access mode chooser in the lobby */
+.access-field { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin: 0 0 14px; }
+.access-field legend { font-size: 13px; color: var(--muted); padding: 0 6px; }
+.radio { display: flex; align-items: flex-start; gap: 10px; padding: 7px 2px; cursor: pointer; }
+.radio input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); }
+.radio small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+/* "Sign in instead" on the quick-join card */
+.quiet-link { text-align: center; margin: 14px 0 0; }
+.linkish { background: none; border: 0; color: var(--muted); font-size: 13px; text-decoration: underline; padding: 6px; }
+.linkish:hover { color: var(--text); }
+
+/* A control that will ask the host for permission rather than act directly */
+.ctrl.needs-ask { opacity: .72; border-style: dashed; }
+
+
+/* Phone-only reveals. These sit at the very end on purpose: the elements they
+   show have their `display: none` defaults declared further up, and equal
+   specificity means the last rule wins. */
+@media (max-width: 720px) {
+  .ctrl-more { display: flex; }
+  .tools-btn { display: grid; }
+}
+
+/* Recording marker, visible to everyone in the room */
+.rec-banner {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(var(--topbar-h) + 8px); z-index: 27;
+  background: var(--danger); color: #fff; font-size: 12px; font-weight: 600;
+  padding: 4px 12px; border-radius: 999px; box-shadow: 0 6px 18px rgba(0,0,0,.4);
+  max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ---- Google sign-in + password reset ---- */
+.google-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: var(--tap); }
+.google-btn svg { flex: 0 0 auto; }
+.forgot-row { margin: -6px 0 12px; text-align: right; }
+.forgot-row .linkish { padding: 2px 0; font-size: 12px; }
+
+/* ======================= Pre-join preview ======================= */
+.prejoin-card {
+  width: min(880px, 94vw); display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: 20px; box-shadow: 0 24px 70px rgba(0,0,0,.5);
+}
+.prejoin-video { position: relative; background: #05080f; border-radius: 14px; overflow: hidden; aspect-ratio: 4/3; }
+.prejoin-video video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.pj-camoff { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.pj-meter { position: absolute; left: 12px; right: 12px; bottom: 12px; height: 6px; background: rgba(255,255,255,.18); border-radius: 999px; overflow: hidden; }
+.pj-level { height: 100%; width: 0%; background: var(--ok); transition: width .08s linear; }
+.prejoin-side { display: flex; flex-direction: column; min-width: 0; }
+.prejoin-side h2 { margin: 0 0 2px; font-size: 20px; }
+.prejoin-side .tagline { margin: 0 0 16px; text-align: left; }
+.pj-toggles { display: flex; gap: 8px; margin: 4px 0 14px; }
+.pj-toggles .ghost { flex: 1; }
+.pj-toggles .ghost.off { border-color: var(--danger); color: #ffb4b4; }
+@media (max-width: 720px) {
+  .prejoin-card { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+  .prejoin-video { aspect-ratio: 16/10; }
+}
+
+/* ======================= Breakouts, roles, chat files ======================= */
+.brk-live { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.brk-room-row { display: flex; align-items: center; gap: 6px; padding: 6px; background: var(--panel-2); border-radius: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.brk-room-row .rn { flex: 1; min-width: 90px; font-size: 13px; }
+.brk-countdown { background: rgba(0,0,0,.35); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.prow .badge.cohost { background: #7c3aed; }
+#meetClock { font-variant-numeric: tabular-nums; }
+
+.chat-file { display: flex; align-items: center; gap: 8px; margin-top: 4px; background: rgba(255,255,255,.06); border-radius: 10px; padding: 8px 10px; }
+.chat-file .cf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.chat-file .cf-size { font-size: 11px; color: var(--muted); }
+.chat-file a { color: var(--text); }
+.cf-progress { height: 4px; background: rgba(255,255,255,.15); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+.cf-bar { height: 100%; width: 0%; background: var(--accent); transition: width .15s linear; }
+.pact-select { min-height: 30px; font-size: 12px; padding: 2px 6px; max-width: 120px; }
+.pj-skip { margin-top: 8px; padding: 6px 2px; min-height: 34px; font-size: 13px; color: var(--muted); cursor: pointer; }
+
+/* ===================== Phone usability fixes ===================== */
+/* Native checkboxes render around 13px, too small to hit reliably. */
+.check input[type="checkbox"],
+.wr-toggle input[type="checkbox"] {
+  width: 20px; height: 20px; flex: 0 0 auto; accent-color: var(--accent);
+}
+/* Comfortable tap targets: the label is what you actually press. */
+.check, .wr-toggle { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 0; cursor: pointer; }
+
+/* Row actions in the participants list. */
+.pact { min-height: 32px; }
+
+/* The chat composer must never push its Send button off the panel. */
+.chat-row { min-width: 0; }
+.chat-row #chatInput { flex: 1; min-width: 0; }
+.chat-row .primary { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  /* A phone has no room for the meeting behind a panel, so panels take the
+     whole screen. Declared here, after the base .side-panel width, because
+     equal specificity means the last rule wins. */
+  .side-panel { width: 100%; }
+}
+
+@media (max-width: 400px) {
+  /* Below this the topbar cannot fit on one line, so let it wrap rather than
+     pushing the View and More menus off the edge of the screen. */
+  .topbar { flex-wrap: wrap; row-gap: 6px; }
+  .topbar-left { flex: 1 1 auto; }
+  .topbar-right { flex: 1 1 auto; justify-content: flex-end; }
+  #roomTitle { max-width: 40vw; }
+  .pact { font-size: 12px; padding: 4px 8px; }
+}

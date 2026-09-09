@@ -25,9 +25,24 @@ export class Recorder {
 
   get recording() { return this.active; }
 
+  // WebM first (Chrome, Firefox, Chrome on Android), then MP4 for Safari —
+  // iOS/macOS Safari can record but has never supported WebM. Without the MP4
+  // entries Safari fell through to the browser default and we then mislabelled
+  // the result as .webm, producing a file nothing would open.
   pickMime() {
-    const types = ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus", "video/webm"];
+    const types = [
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9,opus",
+      "video/webm",
+      "video/mp4;codecs=avc1,mp4a.40.2",
+      "video/mp4",
+    ];
     return types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  }
+
+  // File extension for whatever container the browser actually gave us.
+  static extFor(mime) {
+    return String(mime || "").includes("mp4") ? "mp4" : "webm";
   }
 
   // opts: { boardCanvas, tiles:()=>[{video,label}], bgColor, audioStreams:[MediaStream] }
@@ -110,8 +125,10 @@ export class Recorder {
   }
 
   // MediaRecorder WebM has no Duration/Cues, so players can't seek. Patch the
-  // duration in so the file is scrubbable (forward/backward).
+  // duration in so the file is scrubbable (forward/backward). This is a WebM
+  // container hack — never run it on the MP4 Safari produces.
   async _fixSeek(blob) {
+    if (!String(blob.type || "").includes("webm")) return blob;
     try {
       if (!window.ysFixWebmDuration) {
         await new Promise((res, rej) => {
@@ -142,8 +159,9 @@ export class Recorder {
 
     const type = this.rec.mimeType || "video/webm";
     let blob = new Blob(this.chunks, { type });
-    blob = await this._fixSeek(blob); // make it seekable
-    const filename = `zoomlike-${roomId || "room"}-${stamp()}.webm`;
+    blob = await this._fixSeek(blob); // make it seekable (WebM only)
+    const ext = Recorder.extFor(type);
+    const filename = `zoomlike-${roomId || "room"}-${stamp()}.${ext}`;
 
     if (target === "server" && this.uploadUrl) {
       try {
@@ -164,7 +182,7 @@ export class Recorder {
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: filename,
-          types: [{ description: "WebM video", accept: { "video/webm": [".webm"] } }],
+          types: [{ description: "Video", accept: { [type.split(";")[0]]: ["." + ext] } }],
         });
         const w = await handle.createWritable();
         await w.write(blob);
@@ -176,13 +194,25 @@ export class Recorder {
       }
     }
 
+    // No save dialog on any mobile browser, so fall back to a download. On
+    // Android this lands in Downloads. iOS Safari ignores the download
+    // attribute on a blob URL and opens the file instead, so hand the caller
+    // the URL and let it tell the user to use the share sheet.
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 8000);
-    return { where: "downloads", filename };
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return { where: isIosSafari() ? "opened" : "downloads", filename };
   }
+}
+
+// iOS Safari (and every iOS browser, which all use WebKit) cannot save a blob
+// via the download attribute.
+function isIosSafari() {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return ios;
 }
 
 function stamp() {

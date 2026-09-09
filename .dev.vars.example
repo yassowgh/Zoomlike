@@ -1,0 +1,30 @@
+# Copy to .dev.vars for `wrangler dev`. .dev.vars is gitignored — never commit
+# real secrets. In production these are Cloudflare vars/secrets, not this file.
+
+# Signs login JWTs. Required; in production use `wrangler secret put AUTH_SECRET`.
+AUTH_SECRET=local-dev-secret-change-me
+
+# --- Sign in with Google (optional) ---------------------------------------
+# Create an OAuth 2.0 Web application client at
+# https://console.cloud.google.com/apis/credentials and add these authorised
+# redirect URIs:
+#   http://127.0.0.1:8787/api/auth/google/callback
+#   https://<your-worker-domain>/api/auth/google/callback
+# The client id is a var; put the secret in `wrangler secret put GOOGLE_CLIENT_SECRET`.
+# Leave both unset and the "Continue with Google" button stays hidden.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# --- Password reset email (optional) --------------------------------------
+# Either a Resend API key plus a verified sender address...
+RESEND_API_KEY=
+MAIL_FROM=
+
+# ...or any endpoint that accepts {to,name,subject,text,link} as JSON.
+# Leave this commented out for ordinary local use: with it set but nothing
+# listening, the reset form reports that a link was sent when none was.
+# tests/e2e-auth.mjs runs a receiver on this port, so uncomment it for that.
+# MAIL_WEBHOOK_URL=http://127.0.0.1:8799/mail
+
+# With none of the above set, the reset form tells the user that reset email
+# is not configured rather than pretending a message went out.
