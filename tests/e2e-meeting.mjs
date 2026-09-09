@@ -128,8 +128,15 @@ const dev = await H.evaluate(() => ({
 }));
 check('22 · device panel lists cameras and microphones', dev.open && dev.cams >= 1 && dev.mics >= 1, JSON.stringify(dev));
 const micIds = await H.evaluate(() => [...document.getElementById('micSel').options].map(o => o.value));
-if (micIds.length > 1) {
-  await H.selectOption('#micSel', micIds[1]);
+// Pick a device that is genuinely different from the one in use, or selecting
+// it fires no change event and nothing happens.
+const curMic = await H.evaluate(() => document.getElementById('micSel').value);
+const otherMic = micIds.find(id => id !== curMic);
+if (otherMic) {
+  await H.selectOption('#micSel', otherMic);
+  // Wait for the switch to report back instead of guessing at a delay.
+  await H.waitForFunction(() => /changed|could not/i.test(document.getElementById('devHint').textContent),
+                          null, { timeout: 20000 }).catch(() => {});
   // Wait for the mesh to settle rather than snapshotting mid-transition.
   await H.waitForFunction(() => [...(window.__zl_state.mesh?.peers?.values() || [])]
     .every(p => p.pc.connectionState === 'connected'), null, { timeout: 20000 }).catch(() => {});

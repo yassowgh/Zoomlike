@@ -264,6 +264,13 @@ reconnect; a guest has no stable identity, so their co-host role lasts only for
 that connection. Sub-rooms are handed the owner and the co-host list when a
 breakout opens, so moderators are moderators in there too.
 
+### Recovering a failed peer connection
+`rtc.js` used to drop a peer the moment its connection reached `failed`, which
+left that person in the roster with dead media until somebody reloaded. It now
+rebuilds the connection (three attempts, reset on success) and re-offers —
+re-adding the local tracks fires `onnegotiationneeded` by itself. The tile is
+deliberately left in place while reconnecting rather than vanishing.
+
 ### Devices
 `devices.js` enumerates hardware (labels only appear after permission is
 granted, so it always runs post-getUserMedia), remembers choices in
@@ -273,10 +280,14 @@ disconnected. Speaker choice needs `setSinkId` and the field hides itself where
 that is missing.
 
 ### Pre-join preview
-Everyone passes through a camera/mic check on the way in — except when the
-meeting itself is moving them, which is what `skip=1` marks. Being thrown into
-a breakout room and asked "ready to join?" would be nonsense, and the devices
-were already chosen on the way into the meeting.
+Everyone passes through a camera/mic check on the way in, with two exceptions:
+- **`skip=1`** — the meeting is moving you (into or out of a breakout). Being
+  thrown into a room and asked "ready to join?" would be nonsense, and the
+  devices were already chosen on the way into the meeting.
+- **`localStorage.zl_skip_prejoin`** — the person ticked "Skip this check next
+  time". Only honoured when a name is already remembered, so nobody is ever
+  dropped into a meeting without having been asked who they are. The in-meeting
+  Audio & video panel turns it back on.
 
 ### Breakout rooms
 Members are navigated to `/room/<main>-b<n>?main=<main>&skip=1`. What the main
@@ -432,7 +443,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 - **Google sign-in and password reset are both opt-in** and stay hidden/disabled until their environment variables are set (see §3).
 - **Chat attachments are relayed, not stored.** Someone who joins after a file was shared will not see it, and there is a 10 MB cap. Persisting them would need R2.
 - **A guest's co-host role does not survive their reconnect** — it is remembered by email, and a guest has none.
-- **The pre-join preview adds one click** for a returning guest following an invite link, where previously a remembered name went straight in. Being moved into a breakout still bypasses it.
+- **The pre-join preview adds one click** for a returning guest following an invite link, unless they tick "Skip this check next time" (see §6), which restores the zero-click path. Being moved into a breakout always bypasses it.
 - **Breakout membership is decided when the rooms open.** Someone who joins the meeting afterwards is not assigned to a room until a moderator moves them.
 - Speaker (audio output) selection is Chromium-only; the field hides itself elsewhere.
 - **Board background is host-only** now that it is shared state; participants can no longer set their own.
@@ -444,7 +455,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Four committed suites, 106 checks in total, run with `npm test` against a
+Five committed suites, 126 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
@@ -452,6 +463,7 @@ Four committed suites, 106 checks in total, run with `npm test` against a
 | `tests/e2e.mjs` | `npm run test:e2e` | the meeting flow (38) |
 | `tests/e2e-controls.mjs` | `npm run test:controls` | active speaker, whiteboard requests, per-recording approval (16) |
 | `tests/e2e-meeting.mjs` | `npm run test:meeting` | co-hosts, devices, pre-join, breakouts, mute-on-entry, rename, timer, chat files (28) |
+| `tests/e2e-mobile.mjs` | `npm run test:mobile` | every screen and panel at 390px and 320px: overflow, tap targets, covered controls, skippable pre-join (20) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset
