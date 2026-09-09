@@ -21,8 +21,10 @@ RESEND_API_KEY=
 MAIL_FROM=
 
 # ...or any endpoint that accepts {to,name,subject,text,link} as JSON.
-# tests/e2e-auth.mjs runs a local receiver on this port.
-MAIL_WEBHOOK_URL=http://127.0.0.1:8799/mail
+# Leave this commented out for ordinary local use: with it set but nothing
+# listening, the reset form reports that a link was sent when none was.
+# tests/e2e-auth.mjs runs a receiver on this port, so uncomment it for that.
+# MAIL_WEBHOOK_URL=http://127.0.0.1:8799/mail
 
 # With none of the above set, the reset form tells the user that reset email
 # is not configured rather than pretending a message went out.
