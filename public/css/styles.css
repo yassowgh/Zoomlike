@@ -324,7 +324,6 @@ input { font: inherit; }
   .zoom-ctrls { right: 8px; bottom: 8px; }
   .zoom-ctrls button { width: 32px; height: 32px; font-size: 16px; }
   .nodraw-hint { font-size: 11px; padding: 4px 10px; max-width: 90%; }
-  .side-panel { width: 100%; }
 }
 
 /* ============================ Auth screen ============================ */
@@ -542,3 +541,38 @@ input { font: inherit; }
 .cf-progress { height: 4px; background: rgba(255,255,255,.15); border-radius: 999px; overflow: hidden; margin-top: 6px; }
 .cf-bar { height: 100%; width: 0%; background: var(--accent); transition: width .15s linear; }
 .pact-select { min-height: 30px; font-size: 12px; padding: 2px 6px; max-width: 120px; }
+.pj-skip { margin-top: 8px; padding: 6px 2px; min-height: 34px; font-size: 13px; color: var(--muted); cursor: pointer; }
+
+/* ===================== Phone usability fixes ===================== */
+/* Native checkboxes render around 13px, too small to hit reliably. */
+.check input[type="checkbox"],
+.wr-toggle input[type="checkbox"] {
+  width: 20px; height: 20px; flex: 0 0 auto; accent-color: var(--accent);
+}
+/* Comfortable tap targets: the label is what you actually press. */
+.check, .wr-toggle { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 0; cursor: pointer; }
+
+/* Row actions in the participants list. */
+.pact { min-height: 32px; }
+
+/* The chat composer must never push its Send button off the panel. */
+.chat-row { min-width: 0; }
+.chat-row #chatInput { flex: 1; min-width: 0; }
+.chat-row .primary { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  /* A phone has no room for the meeting behind a panel, so panels take the
+     whole screen. Declared here, after the base .side-panel width, because
+     equal specificity means the last rule wins. */
+  .side-panel { width: 100%; }
+}
+
+@media (max-width: 400px) {
+  /* Below this the topbar cannot fit on one line, so let it wrap rather than
+     pushing the View and More menus off the edge of the screen. */
+  .topbar { flex-wrap: wrap; row-gap: 6px; }
+  .topbar-left { flex: 1 1 auto; }
+  .topbar-right { flex: 1 1 auto; justify-content: flex-end; }
+  #roomTitle { max-width: 40vw; }
+  .pact { font-size: 12px; padding: 4px 8px; }
+}

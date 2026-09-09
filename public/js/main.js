@@ -37,7 +37,7 @@ const el = {
   prejoin: $("prejoin"), pjVideo: $("pjVideo"), pjCamOff: $("pjCamOff"), pjLevel: $("pjLevel"),
   pjTitle: $("pjTitle"), pjRoom: $("pjRoom"), pjName: $("pjName"), pjJoin: $("pjJoin"), pjHint: $("pjHint"),
   pjCamSel: $("pjCamSel"), pjMicSel: $("pjMicSel"), pjSpkSel: $("pjSpkSel"), pjSpkField: $("pjSpkField"),
-  pjMic: $("pjMic"), pjCam: $("pjCam"),
+  pjMic: $("pjMic"), pjCam: $("pjCam"), pjSkip: $("pjSkip"), prejoinToggle: $("prejoinToggle"),
   // in-meeting devices
   devices: $("devices"), devicesBtn: $("devicesBtn"), devicesClose: $("devicesClose"),
   camSel: $("camSel"), micSel: $("micSel"), spkSel: $("spkSel"), spkField: $("spkField"), devHint: $("devHint"),
@@ -711,6 +711,19 @@ function renderSchedule(meetings) {
   }
 }
 
+// Someone who has been here before can opt out of the camera check. We only
+// honour it when we already know their name, so nobody is ever dropped into a
+// meeting without having been asked who they are.
+const SKIP_PREJOIN_KEY = "zl_skip_prejoin";
+function prejoinSkipped() {
+  try {
+    return localStorage.getItem(SKIP_PREJOIN_KEY) === "1" && !!(localStorage.getItem("zl_name") || "").trim();
+  } catch { return false; }
+}
+function setPrejoinSkipped(on) {
+  try { on ? localStorage.setItem(SKIP_PREJOIN_KEY, "1") : localStorage.removeItem(SKIP_PREJOIN_KEY); } catch {}
+}
+
 // ------------------------------------------------------- pre-join preview
 // Nobody can see or hear you here. This is where you confirm the camera is
 // pointing the right way and the right microphone is picked up.
@@ -722,6 +735,7 @@ async function openPrejoin(roomId) {
   el.quickJoin.hidden = true; el.auth.hidden = true; el.lobby.hidden = true; el.room.hidden = true;
   el.pjRoom.textContent = roomId ? `Room: ${roomId}` : "";
   el.pjName.value = state.name || localStorage.getItem("zl_name") || "";
+  el.pjSkip.checked = localStorage.getItem(SKIP_PREJOIN_KEY) === "1";
   el.pjSpkField.hidden = !Devices.canChooseSpeaker();
   state.micOn = true; state.camOn = true;
   paintPrejoinToggles();
@@ -778,6 +792,7 @@ function wirePrejoin() {
   el.pjCamSel.onchange = async () => { Devices.remember("videoinput", el.pjCamSel.value); await startPrejoinPreview(); };
   el.pjMicSel.onchange = async () => { Devices.remember("audioinput", el.pjMicSel.value); await startPrejoinPreview(); };
   el.pjSpkSel.onchange = () => Devices.remember("audiooutput", el.pjSpkSel.value);
+  el.pjSkip.onchange = () => setPrejoinSkipped(el.pjSkip.checked);
   el.pjJoin.onclick = () => {
     const name = el.pjName.value.trim().slice(0, 40);
     if (!name) { el.pjHint.textContent = "Please enter your name."; el.pjName.focus(); return; }
@@ -885,8 +900,11 @@ function startJoin() {
   if (!roomId) { el.lobbyHint.textContent = "Please enter a room name."; return; }
   const accessPick = document.querySelector('input[name="access"]:checked');
   state.access = accessPick && accessPick.value === "open" ? "open" : "approval";
-  if (new URLSearchParams(location.search).get("skip") === "1") {
+  // skip=1 means the meeting is moving you; prejoinSkipped() means you asked
+  // not to be stopped. Either way, go straight in on the remembered settings.
+  if (new URLSearchParams(location.search).get("skip") === "1" || prejoinSkipped()) {
     state.roomId = roomId;
+    state.name = (el.nameInput.value || localStorage.getItem("zl_name") || "Guest").trim().slice(0, 40);
     return join();
   }
   openPrejoin(roomId);
@@ -1231,10 +1249,18 @@ function setupControls() {
     el.moreMenu.hidden = true;
     showPanel("devices");
     el.spkField.hidden = !Devices.canChooseSpeaker();
+    el.prejoinToggle.checked = localStorage.getItem(SKIP_PREJOIN_KEY) !== "1";
     el.devHint.textContent = "";
     await refreshDeviceLists();
   };
   el.devicesClose.onclick = () => closePanels();
+  // Somewhere to turn the camera check back on once it has been skipped.
+  el.prejoinToggle.onchange = () => {
+    setPrejoinSkipped(!el.prejoinToggle.checked);
+    el.devHint.textContent = el.prejoinToggle.checked
+      ? "You'll see the camera check before your next meeting."
+      : "You'll go straight into your next meeting.";
+  };
   el.camSel.onchange = () => switchDevice("videoinput", el.camSel.value);
   el.micSel.onchange = () => switchDevice("audioinput", el.micSel.value);
   el.spkSel.onchange = () => switchDevice("audiooutput", el.spkSel.value);
