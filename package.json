@@ -11,7 +11,8 @@
     "test:e2e": "node tests/e2e.mjs",
     "test:controls": "node tests/e2e-controls.mjs",
     "test:auth": "node tests/e2e-auth.mjs",
-    "test": "npm run test:e2e && npm run test:controls && npm run test:auth"
+    "test": "npm run test:e2e && npm run test:controls && npm run test:meeting && npm run test:auth",
+    "test:meeting": "node tests/e2e-meeting.mjs"
   },
   "devDependencies": {
     "playwright": "^1.63.0",

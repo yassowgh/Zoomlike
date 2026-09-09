@@ -157,12 +157,6 @@
           <button id="joinBtn" class="primary" type="button">Join / Create room</button>
         </div>
 
-        <details class="prejoin">
-          <summary>Device &amp; join options</summary>
-          <label class="check"><input id="optCam" type="checkbox" checked /> Start with camera on</label>
-          <label class="check"><input id="optMic" type="checkbox" checked /> Start with microphone on</label>
-        </details>
-
         <div class="sched" id="schedSection">
           <div class="sched-head">
             <strong>📅 Your scheduled meetings</strong>
@@ -191,6 +185,48 @@
       <footer class="lobby-foot">Whiteboard-first · Peer-to-peer video · Runs on Cloudflare</footer>
     </section>
 
+    <!-- ========================= PRE-JOIN PREVIEW ========================= -->
+    <!-- Check your camera, mic and hardware before anyone can see or hear you. -->
+    <section id="prejoin" class="auth-screen" hidden>
+      <div class="prejoin-card">
+        <div class="prejoin-video">
+          <video id="pjVideo" autoplay playsinline muted></video>
+          <div id="pjCamOff" class="pj-camoff" hidden>Camera is off</div>
+          <div class="pj-meter"><div id="pjLevel" class="pj-level"></div></div>
+        </div>
+        <div class="prejoin-side">
+          <h2 id="pjTitle">Ready to join?</h2>
+          <p class="tagline" id="pjRoom"></p>
+
+          <label class="field">
+            <span>Your name</span>
+            <input id="pjName" type="text" placeholder="Your name" maxlength="40" autocomplete="name" />
+          </label>
+
+          <label class="field">
+            <span>Camera</span>
+            <select id="pjCamSel" class="chat-select"></select>
+          </label>
+          <label class="field">
+            <span>Microphone</span>
+            <select id="pjMicSel" class="chat-select"></select>
+          </label>
+          <label class="field" id="pjSpkField">
+            <span>Speaker</span>
+            <select id="pjSpkSel" class="chat-select"></select>
+          </label>
+
+          <div class="pj-toggles">
+            <button id="pjMic" class="ghost" type="button">🎙️ Mic on</button>
+            <button id="pjCam" class="ghost" type="button">📷 Camera on</button>
+          </div>
+
+          <button id="pjJoin" class="primary" type="button">Join now</button>
+          <p class="hint" id="pjHint"></p>
+        </div>
+      </div>
+    </section>
+
     <!-- ============================ ROOM ============================ -->
     <section id="room" class="room" hidden>
       <header class="topbar">
@@ -199,6 +235,7 @@
           <button id="copyLinkBtn" class="ghost small" type="button">🔗 <span class="btxt">Copy invite</span></button>
         </div>
         <div class="topbar-right">
+          <span id="meetClock" class="pill" title="How long this meeting has been running">00:00</span>
           <span id="connState" class="pill">connecting…</span>
 
           <!-- How participants are laid out (per viewer, like Zoom's View menu) -->
@@ -221,6 +258,9 @@
           <div class="ctrl-pop">
             <button id="moreBtn" class="ghost small" type="button" title="More options">⋯</button>
             <div id="moreMenu" class="pop-menu anchor-right" hidden>
+              <button id="devicesBtn">🎛️ Audio &amp; video settings</button>
+              <button id="renameBtn">✏️ Rename yourself</button>
+              <div class="menu-sep"></div>
               <button id="boardToggleBtn" class="host-only" hidden>🖊️ Turn whiteboard off</button>
               <button id="bgBtn">🎨 Board background</button>
               <div class="menu-sep"></div>
@@ -351,6 +391,17 @@
       <!-- Reaction overlay (floating emojis) -->
       <div id="reactionLayer" class="reaction-layer"></div>
 
+      <!-- Audio & video device picker (also reachable from pre-join) -->
+      <div id="devices" class="side-panel" hidden>
+        <div class="side-head"><strong>Audio &amp; video</strong><button id="devicesClose" class="ghost small" type="button">✕</button></div>
+        <div class="breakout-body">
+          <label class="field"><span>Camera</span><select id="camSel" class="chat-select"></select></label>
+          <label class="field"><span>Microphone</span><select id="micSel" class="chat-select"></select></label>
+          <label class="field" id="spkField"><span>Speaker</span><select id="spkSel" class="chat-select"></select></label>
+          <p class="hint" id="devHint"></p>
+        </div>
+      </div>
+
       <!-- Participants panel -->
       <div id="people" class="side-panel" hidden>
         <div class="side-head">
@@ -375,6 +426,7 @@
           <button id="lowerHandsBtn" class="ghost small" type="button">⬇️ Lower all hands</button>
           <button id="breakoutBtn" class="ghost small" type="button">🧩 Breakout rooms</button>
           <label class="wr-toggle"><input id="waitingToggle" type="checkbox" /> Waiting room</label>
+          <label class="wr-toggle"><input id="muteEntryToggle" type="checkbox" /> Mute people as they join</label>
           <label class="wr-toggle"><input id="boardOnToggle" type="checkbox" checked /> Whiteboard enabled</label>
           <label class="wr-toggle"><input id="allowDrawToggle" type="checkbox" /> Let everyone draw</label>
           <label class="wr-toggle"><input id="allowShareToggle" type="checkbox" /> Let everyone share screen</label>
@@ -386,14 +438,30 @@
       <div id="breakout" class="side-panel" hidden>
         <div class="side-head"><strong>Breakout rooms</strong><button id="breakoutClose" class="ghost small" type="button">✕</button></div>
         <div class="breakout-body">
-          <label class="field"><span>Number of rooms</span>
-            <input id="brkCount" type="number" min="1" max="8" value="2" />
-          </label>
+          <div class="row">
+            <label class="field" style="flex:1"><span>Rooms</span>
+              <input id="brkCount" type="number" min="1" max="8" value="2" />
+            </label>
+            <label class="field" style="flex:1"><span>Minutes (0 = no limit)</span>
+              <input id="brkMinutes" type="number" min="0" max="180" value="10" />
+            </label>
+          </div>
           <button id="brkCreate" class="ghost small" type="button">Create &amp; auto-assign</button>
           <div id="brkPreview" class="brk-preview"></div>
           <div class="brk-actions">
             <button id="brkOpen" class="primary small" type="button" disabled>Open rooms</button>
             <button id="brkCloseAll" class="ghost small" type="button">Close all</button>
+          </div>
+
+          <div id="brkLive" class="brk-live" hidden>
+            <div class="waiting-title">Open rooms</div>
+            <div id="brkRoomList" class="brk-preview"></div>
+            <label class="field"><span>Announce to every room</span>
+              <div class="row">
+                <input id="brkMsg" type="text" placeholder="Five minutes left…" maxlength="500" />
+                <button id="brkSend" class="ghost small" type="button">Send</button>
+              </div>
+            </label>
           </div>
         </div>
       </div>
@@ -401,6 +469,8 @@
       <!-- Breakout banner (participant) -->
       <div id="breakoutBanner" class="breakout-banner" hidden>
         <span>🧩 You're in a breakout room.</span>
+        <span id="brkCountdown" class="brk-countdown" hidden></span>
+        <button id="brkAskBtn" class="ghost small" type="button">Ask to switch room</button>
         <button id="returnMain" class="ghost small" type="button">← Return to main room</button>
       </div>
 
@@ -414,9 +484,11 @@
             <select id="chatTo" class="chat-select"><option value="">Everyone</option></select>
           </div>
           <div class="chat-row">
+            <button id="chatAttach" class="ghost small" type="button" title="Send a file">📎</button>
             <input id="chatInput" type="text" placeholder="Type a message…" maxlength="2000" autocomplete="off" />
             <button class="primary small" type="submit">Send</button>
           </div>
+          <input id="chatFile" type="file" hidden />
         </form>
       </div>
 
@@ -438,6 +510,21 @@
           <div class="modal-actions">
             <button id="confirmCancel" class="ghost" type="button">Cancel</button>
             <button id="confirmLeaveBtn" class="danger-btn" type="button">Leave</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rename yourself -->
+      <div id="renameModal" class="modal" hidden>
+        <div class="modal-card">
+          <h3>Rename yourself</h3>
+          <label class="field">
+            <span>Display name</span>
+            <input id="renameInput" type="text" maxlength="40" autocomplete="name" />
+          </label>
+          <div class="modal-actions">
+            <button id="renameCancel" class="ghost" type="button">Cancel</button>
+            <button id="renameSave" class="primary" type="button">Save</button>
           </div>
         </div>
       </div>

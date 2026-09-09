@@ -504,3 +504,41 @@ input { font: inherit; }
 .google-btn svg { flex: 0 0 auto; }
 .forgot-row { margin: -6px 0 12px; text-align: right; }
 .forgot-row .linkish { padding: 2px 0; font-size: 12px; }
+
+/* ======================= Pre-join preview ======================= */
+.prejoin-card {
+  width: min(880px, 94vw); display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: 20px; box-shadow: 0 24px 70px rgba(0,0,0,.5);
+}
+.prejoin-video { position: relative; background: #05080f; border-radius: 14px; overflow: hidden; aspect-ratio: 4/3; }
+.prejoin-video video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.pj-camoff { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.pj-meter { position: absolute; left: 12px; right: 12px; bottom: 12px; height: 6px; background: rgba(255,255,255,.18); border-radius: 999px; overflow: hidden; }
+.pj-level { height: 100%; width: 0%; background: var(--ok); transition: width .08s linear; }
+.prejoin-side { display: flex; flex-direction: column; min-width: 0; }
+.prejoin-side h2 { margin: 0 0 2px; font-size: 20px; }
+.prejoin-side .tagline { margin: 0 0 16px; text-align: left; }
+.pj-toggles { display: flex; gap: 8px; margin: 4px 0 14px; }
+.pj-toggles .ghost { flex: 1; }
+.pj-toggles .ghost.off { border-color: var(--danger); color: #ffb4b4; }
+@media (max-width: 720px) {
+  .prejoin-card { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+  .prejoin-video { aspect-ratio: 16/10; }
+}
+
+/* ======================= Breakouts, roles, chat files ======================= */
+.brk-live { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.brk-room-row { display: flex; align-items: center; gap: 6px; padding: 6px; background: var(--panel-2); border-radius: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.brk-room-row .rn { flex: 1; min-width: 90px; font-size: 13px; }
+.brk-countdown { background: rgba(0,0,0,.35); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.prow .badge.cohost { background: #7c3aed; }
+#meetClock { font-variant-numeric: tabular-nums; }
+
+.chat-file { display: flex; align-items: center; gap: 8px; margin-top: 4px; background: rgba(255,255,255,.06); border-radius: 10px; padding: 8px 10px; }
+.chat-file .cf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.chat-file .cf-size { font-size: 11px; color: var(--muted); }
+.chat-file a { color: var(--text); }
+.cf-progress { height: 4px; background: rgba(255,255,255,.15); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+.cf-bar { height: 100%; width: 0%; background: var(--accent); transition: width .15s linear; }
+.pact-select { min-height: 30px; font-size: 12px; padding: 2px 6px; max-width: 120px; }

@@ -44,6 +44,8 @@ await H.screenshot({path:`${SHOT}/01-lobby-access.png`});
 await H.check('input[name="access"][value="open"]');
 await H.fill('#roomInput', room);
 await H.click('#joinBtn');
+await H.waitForSelector('#prejoin:not([hidden])',{timeout:15000});
+await H.click('#pjJoin');
 await H.waitForSelector('#room:not([hidden])',{timeout:15000});
 await H.waitForFunction(()=>document.getElementById('connState')?.textContent.includes('connected'),null,{timeout:15000});
 await S(800);
@@ -59,6 +61,8 @@ check('12 · invite link shows name-only quick join, not login/register', sawQui
 await G.screenshot({path:`${SHOT}/02-quickjoin.png`});
 await G.fill('#qjName','Guesty');
 await G.click('#qjSubmit');
+await G.waitForSelector('#prejoin:not([hidden])',{timeout:15000});
+await G.click('#pjJoin');
 await G.waitForSelector('#room:not([hidden])',{timeout:15000});
 await S(1200);
 const guestWaiting = await G.evaluate(()=>!document.getElementById('waitingScreen').hidden);
@@ -68,13 +72,24 @@ check('peers connected', await H.evaluate(()=>document.querySelectorAll('#videos
 
 // ---------- 12b: second visit needs no prompt at all ----------
 const G2 = await ctx('guest2');
-await G2.evaluate(()=>{}).catch(()=>{});
 await G2.goto(BASE,{waitUntil:'networkidle'});
 await G2.evaluate(()=>localStorage.setItem('zl_name','Returning'));
 await G2.goto(`${BASE}/room/${room}`,{waitUntil:'networkidle'});
 await S(2500);
-const autoJoined = await G2.evaluate(()=>!document.getElementById('room').hidden);
-check('12 · a remembered name joins with no prompt at all', autoJoined);
+// A remembered name skips the name card and the login form entirely; the only
+// stop left is the pre-join camera check, which is deliberate.
+const back = await G2.evaluate(()=>({
+  prejoin: !document.getElementById('prejoin').hidden,
+  auth: !document.getElementById('auth').hidden,
+  quick: !document.getElementById('quickJoin').hidden,
+  name: document.getElementById('pjName').value,
+}));
+check('12 · a remembered name goes straight to the camera check, never a sign-in',
+      back.prejoin && !back.auth && !back.quick && back.name==='Returning', JSON.stringify(back));
+await G2.click('#pjJoin');
+await G2.waitForSelector('#room:not([hidden])',{timeout:15000});
+await S(2500);
+check('12 · and one click puts them in the meeting', true);
 
 // ---------- item 5: only one hand in the UI ----------
 const hands = await H.evaluate(()=>{
@@ -120,8 +135,12 @@ await H.click('#viewBtn'); await S(250);
 await H.click('#viewMenu [data-strip="bottom"]'); await S(600);
 check('7 · participant strip can move to the bottom', await H.evaluate(()=>document.getElementById('room').dataset.strip)==='bottom');
 await H.screenshot({path:`${SHOT}/06-speaker-bottom.png`});
-// persistence across reload
-await H.reload({waitUntil:'networkidle'}); await S(3000);
+// persistence across reload (a reload goes through the camera check again)
+await H.reload({waitUntil:'networkidle'});
+await H.waitForSelector('#prejoin:not([hidden])',{timeout:15000});
+await H.click('#pjJoin');
+await H.waitForSelector('#room:not([hidden])',{timeout:15000});
+await S(3000);
 const persisted = await H.evaluate(()=>({l:document.getElementById('room').dataset.layout,s:document.getElementById('room').dataset.strip}));
 check('7 · layout choice survives a reload', persisted.l==='speaker'&&persisted.s==='bottom', JSON.stringify(persisted));
 
@@ -194,6 +213,10 @@ await M.evaluate(()=>{}).catch(()=>{});
 await M.goto(BASE,{waitUntil:'networkidle'});
 await M.evaluate(()=>localStorage.setItem('zl_name','Mobi'));
 await M.goto(`${BASE}/room/${room}`,{waitUntil:'networkidle'});
+await M.waitForSelector('#prejoin:not([hidden])',{timeout:15000});
+await M.screenshot({path:`${SHOT}/36-mobile-prejoin.png`});
+await M.click('#pjJoin');
+await M.waitForSelector('#room:not([hidden])',{timeout:15000});
 await S(3500);
 const mob = await M.evaluate(()=>{
   const vis = e => e && e.offsetParent !== null;
@@ -238,6 +261,9 @@ const R = await ctx('rejoin');
 await R.goto(BASE,{waitUntil:'networkidle'});
 await R.evaluate(t=>localStorage.setItem('zl_token',t), await H.evaluate(()=>localStorage.getItem('zl_token')));
 await R.goto(`${BASE}/room/${room}`,{waitUntil:'networkidle'});
+await R.waitForSelector('#prejoin:not([hidden])',{timeout:15000});
+await R.click('#pjJoin');
+await R.waitForSelector('#room:not([hidden])',{timeout:15000});
 await S(4000);
 const after = await R.evaluate(()=>({
   shapes: window.__zl_state?.board?.objects?.size ?? -1,

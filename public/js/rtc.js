@@ -98,9 +98,21 @@ export class Mesh {
   // Swap the outgoing video track everywhere (camera <-> screen share) with
   // no renegotiation needed.
   replaceVideoTrack(track) {
+    this._replace("video", track);
+  }
+
+  // Same for the microphone, so switching to a headset mid-call does not
+  // interrupt anyone.
+  replaceAudioTrack(track) {
+    this._replace("audio", track);
+  }
+
+  _replace(kind, track) {
     for (const { pc } of this.peers.values()) {
-      const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
-      if (sender) sender.replaceTrack(track);
+      // Skip the screen-share sender when looking for the camera.
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === kind &&
+        !(kind === "video" && this.screenStream && s.track === this.screenStream.getVideoTracks()[0]));
+      if (sender) sender.replaceTrack(track).catch((err) => console.warn("replaceTrack failed", err));
     }
   }
 

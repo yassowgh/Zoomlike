@@ -17,11 +17,15 @@ await H.goto(BASE,{waitUntil:'networkidle'});
 await H.click('#tabRegister');await H.fill('#authName','Hosty');await H.fill('#authEmail',`r${Date.now()}@e.com`);await H.fill('#authPassword','secret123');
 await H.click('#authSubmit');await H.waitForSelector('#lobby:not([hidden])');
 await H.check('input[name="access"][value="open"]');
-await H.fill('#roomInput',room);await H.click('#joinBtn');await H.waitForSelector('#room:not([hidden])');await S(2000);
+await H.fill('#roomInput',room);await H.click('#joinBtn');
+await H.waitForSelector('#prejoin:not([hidden])',{timeout:15000});await H.click('#pjJoin');
+await H.waitForSelector('#room:not([hidden])',{timeout:15000});await S(2000);
 const G=await mk('guest');
 await G.goto(BASE,{waitUntil:'networkidle'});
 await G.evaluate(()=>localStorage.setItem('zl_name','Guesty'));
-await G.goto(`${BASE}/room/${room}`,{waitUntil:'networkidle'});await S(3500);
+await G.goto(`${BASE}/room/${room}`,{waitUntil:'networkidle'});
+await G.waitForSelector('#prejoin:not([hidden])',{timeout:15000});await G.click('#pjJoin');
+await G.waitForSelector('#room:not([hidden])',{timeout:15000});await S(3500);
 check('two peers connected', await H.evaluate(()=>document.querySelectorAll('#videos .tile').length)===2);
 
 // ---- 17: whiteboard start needs host approval ----
