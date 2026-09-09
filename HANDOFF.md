@@ -17,9 +17,9 @@ A Zoom-like meeting app with a **collaborative whiteboard as the primary feature
 | Hosting + API | **Cloudflare Worker with Static Assets** | One deploy serves the SPA *and* the API. Free. |
 | Realtime state / signaling / persistence | **Durable Objects (SQLite backend)** | Free plan. One DO per room + one global AUTH DO. |
 | Video/audio transport | **WebRTC peer-to-peer mesh** | Free. Good for ~2–8 people. STUN + free public TURN. |
-| Auth | **Custom, Cloudflare-native** | Email+password (PBKDF2), stateless HS256 JWT. No Firebase. |
+| Auth | **Custom, Cloudflare-native** | Email+password (PBKDF2) or Google OAuth, stateless HS256 JWT. No Firebase. |
 | Frontend | **Vanilla JS ES modules + CSS** | No framework, no bundler, no build step. |
-| CI/CD | **GitHub Actions** (`.github/workflows/deploy.yml`) | Deploys on push to `main` — but see §11: **there is no `main` branch**, so it has never run. |
+| CI/CD | **GitHub Actions** (`.github/workflows/deploy.yml`) | Deploys on push to `main`. `main` now exists; see §11 for the one remaining repo setting. |
 
 **Runtime CDN libraries** (loaded lazily in the browser, not bundled):
 - MediaPipe Selfie Segmentation — `cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation` (virtual backgrounds)
@@ -35,7 +35,8 @@ There is **no CSP header** set by the Worker, so these CDNs load fine. If you ad
 ```
 wrangler.toml            Cloudflare config: assets + 2 Durable Object bindings + migrations + vars
 package.json             scripts: dev / deploy / tail / test:e2e (devDeps: wrangler, playwright)
-tests/e2e.mjs            End-to-end smoke test (two browsers + a phone viewport) — see §9
+.dev.vars.example        Documented template for .dev.vars (no secrets in it)
+tests/                   Three end-to-end suites — see §9
 .github/workflows/deploy.yml   GitHub Actions → wrangler deploy on push to main
 .dev.vars                LOCAL secrets for `wrangler dev` (gitignored) — contains AUTH_SECRET for dev
 
@@ -64,6 +65,7 @@ public/
     recorder.js          Compositing recorder (opaque canvas: whiteboard + video strip + mixed audio),
                          WebM duration fix, save to computer (File System Access API) or upload to server.
     virtualbg.js         MediaPipe selfie-segmentation processor → blur / generated scene backgrounds.
+    speaking.js          Active-speaker detection: one WebAudio analyser per stream, RMS + debounce.
 ```
 
 ---
@@ -97,6 +99,14 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=8831301adf4783f131f995656cbb8eec 
 | `AUTH_SECRET` | **secret** (`wrangler secret put`) | Signs login JWTs. Falls back to `"dev-secret-change-me"` if unset (don't ship that). |
 | `RECORDING_UPLOAD_URL` | var | If set, recordings POST here (multipart `file`,`room`,`recordedAt`) with CORS from the app origin. Empty = save to computer. |
 | `TURN_URLS`,`TURN_USERNAME`,`TURN_CREDENTIAL` | vars | Optional custom TURN. If unset, a free public Open Relay TURN is used by default. |
+| `GOOGLE_CLIENT_ID` | var | Google OAuth web client id. Unset ⇒ the "Continue with Google" button is hidden. |
+| `GOOGLE_CLIENT_SECRET` | **secret** | Google OAuth client secret. Both must be set for Google sign-in to appear. |
+| `RESEND_API_KEY` + `MAIL_FROM` | **secret** + var | Sends password-reset email through Resend. |
+| `MAIL_WEBHOOK_URL` | var | Alternative to Resend: any endpoint accepting `{to,name,subject,text,link}` as JSON. |
+
+With no mail provider configured, the reset form says so plainly instead of
+pretending a message was sent. See `.dev.vars.example` for the full template,
+including the Google redirect URIs you must whitelist.
 
 ---
 
@@ -107,6 +117,10 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=8831301adf4783f131f995656cbb8eec 
 - `POST /api/auth/login` `{email,password}` → `{email,name,token}`
 - `GET  /api/auth/me` (Bearer) → `{email,name,guest}`
 - `POST /api/auth/guest` `{name}` → `{email:"",name,guest:true,token}` (invited users, no account)
+- `GET  /api/auth/google/start?to=<path>` → 302 to Google. `to` is validated to be a path on this site, so it cannot be used as an open redirect.
+- `GET  /api/auth/google/callback?code=&state=` → exchanges the code server-to-server, upserts the account by verified email, and redirects back with the session token **in the URL fragment** so it never lands in a server log.
+- `POST /api/auth/forgot` `{email}` → `{ok:true, configured, delivered}`. Always the same shape, so it never reveals whether an address is registered.
+- `POST /api/auth/reset` `{token,password}` → `{email,name,token}` (signs you straight in)
 - `GET  /api/meetings` (Bearer, non-guest) → `{meetings:[…]}`
 - `POST /api/meetings` `{title,when,room,access}` → meeting; also sets the room's owner = caller and its access mode (`"open"` | `"approval"`, default approval)
 - `DELETE /api/meetings/:id` (Bearer)
@@ -172,6 +186,9 @@ Client→server (`room.js` `webSocketMessage`). Non-`hello` messages are ignored
 | `share-request` | — | admitted (asks the host to allow screen share) |
 | `record-request` | — | admitted (asks the host to allow recording) |
 | `share-decision` / `record-decision` | `{target, ok}` | host |
+| `board-request` | — | admitted (asks the host to start the whiteboard) |
+| `board-decision` | `{target, ok}` | host |
+| `recording` | `{on}` | admitted (announces a recording; consumes a non-host's permission on start) |
 | `board-toggle` | `{on}` | host (whiteboard on/off for the meeting) |
 | `board-bg` | `{bg}` | host (shared board background) |
 | `spotlight` | `{target}` (null clears) | host |
@@ -204,8 +221,9 @@ Server→client:
 | `board-state` | `{on}` (whiteboard enabled/disabled) |
 | `board-bg` | `{bg}` (shared board background) |
 | `spotlight` | `{id}` (null clears) |
-| `share-request` / `record-request` | `{id,name}` (to host) |
-| `share-decision` / `record-decision` | `{ok, by}` (to the requester) |
+| `share-request` / `record-request` / `board-request` | `{id,name}` (to host) |
+| `share-decision` / `record-decision` / `board-decision` | `{ok, by}` (to the requester) |
+| `recording-state` | `{id,name,on}` (who is recording, to everyone) |
 | `session-end` | — |
 | `breakout-open` | `{room, roomName}` |
 | `breakout-close` | — |
@@ -247,6 +265,35 @@ spotlight, then a disabled whiteboard falls back to speaker — without ever
 rewriting the viewer's stored preference, so it returns when the override
 lifts.
 
+### Accounts: password, Google, or both
+Accounts are keyed by **email address**, so signing in with Google to an address
+that already has a password links the two rather than creating a second account.
+A Google-only account has no `salt`/`hash`; logging into one with a password
+returns a message pointing at the Google button. Such a user can add a password
+by going through the reset flow.
+
+Google uses the OAuth 2.0 **authorization-code** flow. The `id_token` is fetched
+server-to-server from Google over TLS using the client secret, so its claims are
+trusted without a separate signature check; `email_verified: false` is rejected.
+The `state` parameter is a short-lived HS256 blob signed with `AUTH_SECRET`, so
+the callback needs no server-side session.
+
+### Password reset
+`forgot-create` stores only `sha256(token)` under `reset:<hash>` with a 30-minute
+expiry, so storage alone cannot be used to reset anyone's password. The token is
+deleted the moment it is presented — before validity is even checked — so a link
+can never be replayed. The endpoint answers identically for unknown addresses
+and sends nothing for them.
+
+### Active speaker
+`speaking.js` runs one WebAudio analyser per stream, sampled every 120 ms, and
+calls the loudest participant above a noise floor the active speaker. Two rules
+keep it steady: a challenger has to hold the lead for 250 ms before it switches,
+and the current speaker is kept for at least 1.4 s. **Silence is treated as no
+information at all** rather than a candidate change — speech is full of gaps, and
+resetting the timer on each one meant nobody ever won. It also keeps the last
+speaker highlighted through their own pauses.
+
 ### Permission model
 Three independent sources, recombined by `recomputePerms()`:
 1. being the host,
@@ -255,9 +302,16 @@ Three independent sources, recombined by `recomputePerms()`:
 
 Pressing Share or Record without permission sends `share-request` /
 `record-request` to the host, who allows or denies it from the participants
-panel. Screen share is enforced server-side; **recording is not, and cannot
-be** — a determined participant can always run a screen recorder. Treat the
-recording gate as a policy control, the same as Zoom's.
+panel. Turning the whiteboard *on* works the same way (`board-request`) — only
+the host can switch it off.
+
+Recording permission is **consumed when a recording starts**, so every separate
+recording needs the host to approve it again, and everyone in the room sees a
+red marker naming whoever is recording.
+
+Screen share is enforced server-side. **Recording is not, and cannot be** — a
+determined participant can always run a screen recorder on their own machine.
+Treat the recording gate as a policy control, the same as Zoom's.
 
 ### Spotlight
 The host spotlights someone from the participants panel; every client switches
@@ -309,7 +363,9 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 - **Whiteboard move/resize** sync the **final** state on pointer-up (no live intermediate frames).
 - **Draw/share permission** is a global host toggle — there is no per-user request/approve flow yet.
 - **Recording permission is advisory.** The host's approval gates the app's own recorder; nothing can stop someone screen-recording their device. Same as Zoom.
-- **Speaker view has no active-speaker detection yet.** Without a spotlight it shows the first remote peer. Adding a WebAudio analyser (see §10.2) is what makes it behave like Zoom.
+- **Recording on a phone cannot use a save dialog** — no mobile browser has one. Android lands in Downloads; iOS ignores the download attribute on a blob URL and opens the file instead, so the user is told to save it from the share sheet. Setting `RECORDING_UPLOAD_URL` is the reliable path on mobile.
+- **iOS records MP4, everyone else WebM.** Safari has never supported WebM recording. The extension follows the real container, and the WebM duration patch is skipped for MP4 — which means **MP4 recordings are not seekable** until something remuxes them.
+- **Google sign-in and password reset are both opt-in** and stay hidden/disabled until their environment variables are set (see §3).
 - **Board background is host-only** now that it is shared state; participants can no longer set their own.
 - A **phone always uses the bottom strip**, whichever strip position the viewer picked — a side strip does not fit.
 - The e2e test in §9 needs a **local** `wrangler dev`; there is no unit test for the DO logic yet. No rate limiting. Old rooms' DO storage is never garbage-collected.
@@ -319,8 +375,22 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-`tests/e2e.mjs` is a committed end-to-end smoke test. It drives two desktop
-browser contexts plus a phone viewport against a **local** `wrangler dev` and
+Three committed suites, 77 checks in total, run with `npm test` against a
+**local** `wrangler dev`:
+
+| Suite | Script | Covers |
+|---|---|---|
+| `tests/e2e.mjs` | `npm run test:e2e` | the meeting flow (38) |
+| `tests/e2e-controls.mjs` | `npm run test:controls` | active speaker, whiteboard requests, per-recording approval (16) |
+| `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
+
+`tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset
+link, so `.dev.vars` needs `MAIL_WEBHOOK_URL=http://127.0.0.1:8799/mail` plus
+any `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` values (dummies are fine — the
+redirect to Google is checked, not completed). Without them that suite skips
+itself rather than failing.
+
+The main suite drives two desktop browser contexts plus a phone viewport and
 asserts on the real UI and on live app state (`window.__zl_state`, exposed by
 `main.js` for exactly this purpose). 38 checks covering: register/login, the
 invite-link quick join, access modes, waiting room admit, P2P media actually
@@ -331,7 +401,7 @@ control-bar collapse, and the room reset after the meeting ends.
 
 ```bash
 npx wrangler dev --port 8787 --local   # in one shell
-npm run test:e2e                       # in another
+npm test                               # in another
 ```
 It exits non-zero if anything fails and drops screenshots in
 `tests/screenshots/` (gitignored). Env overrides: `ZL_BASE`, `ZL_CHROMIUM`,
@@ -353,8 +423,8 @@ Still worth adding: `vitest` + `@cloudflare/vitest-pool-workers` for the DO logi
 
 ## 10. Suggested next steps
 
-1. Per-user **draw** request → approve. Share and record now work this way (§6); drawing is still only the global toggle, and should follow the same pattern.
-2. **Active-speaker** detection (WebAudio analyser per stream) → highlight tile and drive speaker view, which currently falls back to the first remote peer when nothing is spotlighted.
+1. Per-user **draw** request → approve. Share, record and whiteboard-start now work this way (§6); drawing is still only the global toggle, and should follow the same pattern.
+2. Make MP4 recordings seekable (remux, or record in fragments), so iOS output scrubs like the WebM output does.
 3. Include the **shared screen** in recordings; optionally record locally per-user or via an SFU egress.
 4. **Reconnection resync**: on WS reconnect, re-request the roster/board (currently relies on the reconnect + welcome).
 5. **Mobile/RTL polish** (this is Yasser's standing requirement: ≥44px targets, 360px width, Arabic `dir="rtl"` where relevant).
@@ -367,11 +437,13 @@ Still worth adding: `vitest` + `@cloudflare/vitest-pool-workers` for the DO logi
 ## 11. Environment notes for the next Claude/dev
 
 - This repo is developed via **Claude Code on the web** (ephemeral container, repo cloned fresh). Commit + push anything worth keeping.
-- **CI has never fired.** `deploy.yml` triggers on push to `main`, and there is
-  no `main` branch — the default branch is `claude/cloudflare-zoom-app-o5xnvb`.
-  This is still **unresolved**: either create `main` (and point the repo's
-  default branch at it) or repoint the workflow trigger. The workflow also has
-  `workflow_dispatch`, so a manual run is possible today.
+- **`main` now exists**, branched from the old default at `29b2765`, and
+  `deploy.yml` deploys on push to it. One thing is still outstanding and can
+  only be done in the GitHub UI: **set `main` as the repository's default
+  branch** (Settings → General → Default branch). Until then new pull requests
+  still target `claude/cloudflare-zoom-app-o5xnvb`.
+- Deploys need repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`;
+  without them the workflow runs and fails at the deploy step.
 - **Cloudflare's API is blocked from cloud sessions**, so `wrangler deploy`,
   `wrangler secret put` and `wrangler tail` all fail from here. Deploys go
   through GitHub Actions or a local machine. `wrangler dev --local` is

@@ -498,3 +498,9 @@ input { font: inherit; }
   padding: 4px 12px; border-radius: 999px; box-shadow: 0 6px 18px rgba(0,0,0,.4);
   max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* ---- Google sign-in + password reset ---- */
+.google-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: var(--tap); }
+.google-btn svg { flex: 0 0 auto; }
+.forgot-row { margin: -6px 0 12px; text-align: right; }
+.forgot-row .linkish { padding: 2px 0; font-size: 12px; }

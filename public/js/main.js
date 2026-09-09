@@ -26,6 +26,11 @@ const el = {
   endedModal: $("endedModal"), endedOk: $("endedOk"),
   quickJoin: $("quickJoin"), qjForm: $("qjForm"), qjName: $("qjName"), qjRoom: $("qjRoom"),
   qjHint: $("qjHint"), qjSignIn: $("qjSignIn"), qjSubmit: $("qjSubmit"),
+  googleBox: $("googleBox"), googleBtn: $("googleBtn"),
+  forgotRow: $("forgotRow"), forgotBtn: $("forgotBtn"), forgotForm: $("forgotForm"),
+  forgotEmail: $("forgotEmail"), forgotSubmit: $("forgotSubmit"), forgotCancel: $("forgotCancel"),
+  resetScreen: $("resetScreen"), resetForm: $("resetForm"), resetPassword: $("resetPassword"),
+  resetSubmit: $("resetSubmit"), resetHint: $("resetHint"), resetCancel: $("resetCancel"),
   schedAccess: $("schedAccess"),
   confirmLeave: $("confirmLeave"), confirmCancel: $("confirmCancel"), confirmLeaveBtn: $("confirmLeaveBtn"),
   guestBox: $("guestBox"), guestRoom: $("guestRoom"), guestName: $("guestName"), guestJoin: $("guestJoin"),
@@ -128,6 +133,32 @@ function roomFromUrl() {
 async function initAuth() {
   wireAuthForm();
   wireQuickJoin();
+  wirePasswordReset();
+
+  // Which sign-in options this deployment can actually offer.
+  try {
+    state.config = await (await fetch("/api/config")).json();
+    el.googleBox.hidden = !state.config.googleAuth;
+  } catch { el.googleBox.hidden = true; }
+
+  // Coming back from Google: the token rides in the fragment so it never
+  // reaches a server log. Take it and scrub it from the address bar.
+  if (location.hash.startsWith("#token=")) {
+    const t = decodeURIComponent(location.hash.slice(7));
+    history.replaceState(null, "", location.pathname + location.search);
+    if (t) { localStorage.setItem("zl_token", t); sessionStorage.setItem("zl_token", t); }
+  }
+  const params = new URLSearchParams(location.search);
+  const authError = params.get("autherror");
+  if (authError) {
+    history.replaceState(null, "", location.pathname);
+    showAuth();
+    el.authHint.textContent = authError;
+    return;
+  }
+  // A password-reset link takes priority over everything else.
+  const resetToken = params.get("reset");
+  if (resetToken) return showReset(resetToken);
   // sessionStorage carries a guest/reload token across navigations (breakouts);
   // localStorage carries a registered user's persistent login.
   const token = sessionStorage.getItem("zl_token") || localStorage.getItem("zl_token") || "";
@@ -146,10 +177,88 @@ async function initAuth() {
 }
 
 function showAuth() {
-  el.quickJoin.hidden = true;
+  el.quickJoin.hidden = true; el.resetScreen.hidden = true;
   el.auth.hidden = false; el.lobby.hidden = true; el.room.hidden = true;
   showGuestOption();
   el.authEmail.focus();
+}
+
+// ------------------------------------------------- forgot / reset password
+function showReset(token) {
+  state.resetToken = token;
+  el.resetScreen.hidden = false;
+  el.auth.hidden = true; el.quickJoin.hidden = true; el.lobby.hidden = true; el.room.hidden = true;
+  el.resetPassword.focus();
+}
+
+function wirePasswordReset() {
+  el.googleBtn.onclick = () => {
+    // Come back to wherever they were, so an invite link survives sign-in.
+    const to = location.pathname + location.search;
+    location.href = "/api/auth/google/start?to=" + encodeURIComponent(to);
+  };
+
+  const showForgot = (on) => {
+    el.forgotForm.hidden = !on;
+    el.authForm.hidden = on;
+    el.forgotRow.hidden = on;
+    el.authHint.textContent = "";
+    if (on) el.forgotEmail.value = el.authEmail.value, el.forgotEmail.focus();
+  };
+  el.forgotBtn.onclick = () => showForgot(true);
+  el.forgotCancel.onclick = () => showForgot(false);
+
+  el.forgotForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const email = el.forgotEmail.value.trim();
+    if (!email) return;
+    el.forgotSubmit.disabled = true;
+    el.authHint.textContent = "Sending…";
+    try {
+      const r = await fetch("/api/auth/forgot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await r.json();
+      // The reply is identical whether or not the address is registered, so
+      // this never reveals who has an account. Close the form first — it
+      // clears the hint line on the way out.
+      showForgot(false);
+      el.authHint.textContent = data.configured
+        ? "If that email has an account, a reset link is on its way. It expires in 30 minutes."
+        : "Password reset email is not configured on this server yet — ask the person running it.";
+    } catch {
+      el.authHint.textContent = "Network error. Please try again.";
+    } finally {
+      el.forgotSubmit.disabled = false;
+    }
+  };
+
+  el.resetCancel.onclick = () => { history.replaceState(null, "", "/"); showAuth(); };
+  el.resetForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const password = el.resetPassword.value;
+    if (!password) return;
+    el.resetSubmit.disabled = true;
+    el.resetHint.textContent = "Saving…";
+    try {
+      const r = await fetch("/api/auth/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: state.resetToken, password }),
+      });
+      const data = await r.json();
+      if (!r.ok) { el.resetHint.textContent = data.error || "Could not set your password."; return; }
+      localStorage.setItem("zl_token", data.token);
+      history.replaceState(null, "", "/");
+      enterLobby(data);
+    } catch {
+      el.resetHint.textContent = "Network error. Please try again.";
+    } finally {
+      el.resetSubmit.disabled = false;
+    }
+  };
 }
 
 // ---- Quick join: name only, or nothing at all if we already know it -------
@@ -204,6 +313,7 @@ function wireAuthForm() {
     el.authSubmit.textContent = reg ? "Create account" : "Log in";
     el.authTagline.textContent = reg ? "Create an account to start meeting." : "Log in to start meeting.";
     el.authPassword.autocomplete = reg ? "new-password" : "current-password";
+    el.forgotRow.hidden = reg;
     el.authHint.textContent = "";
   };
   el.tabLogin.onclick = () => setMode("login");
@@ -277,7 +387,7 @@ function enterLobby(account) {
   sessionStorage.setItem("zl_token", account.token);
   el.whoami.textContent = account.name;
   el.nameInput.value = account.name;
-  el.quickJoin.hidden = true;
+  el.quickJoin.hidden = true; el.resetScreen.hidden = true;
   el.auth.hidden = true; el.lobby.hidden = false; el.room.hidden = true;
   // Scheduling is for registered users only.
   el.schedSection.hidden = state.isGuest;

@@ -46,6 +46,14 @@
           </div>
         </div>
 
+        <div id="googleBox" hidden>
+          <button id="googleBtn" class="ghost google-btn" type="button">
+            <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.2-.4-4.7H24v8.9h11.8c-.5 2.7-2 5-4.4 6.6v5.5h7.1c4.1-3.8 6.6-9.4 6.6-16.3z"/><path fill="#34A853" d="M24 46c6 0 11-2 14.6-5.3l-7.1-5.5c-2 1.3-4.5 2.1-7.5 2.1-5.8 0-10.7-3.9-12.4-9.2H4.2v5.7C7.8 41.1 15.3 46 24 46z"/><path fill="#FBBC05" d="M11.6 28.1c-.5-1.4-.7-2.9-.7-4.4s.3-3 .7-4.4v-5.7H4.2C2.6 16.7 1.7 20.2 1.7 23.7s.9 7 2.5 10.1l7.4-5.7z"/><path fill="#EA4335" d="M24 10.3c3.3 0 6.2 1.1 8.5 3.3l6.3-6.3C35 3.8 30 1.7 24 1.7 15.3 1.7 7.8 6.6 4.2 13.6l7.4 5.7c1.7-5.3 6.6-9 12.4-9z"/></svg>
+            <span>Continue with Google</span>
+          </button>
+          <div class="or"><span>or</span></div>
+        </div>
+
         <div class="tabs">
           <button id="tabLogin" class="tab active" type="button">Log in</button>
           <button id="tabRegister" class="tab" type="button">Register</button>
@@ -67,8 +75,20 @@
               <button id="pwToggle" class="pw-toggle" type="button" tabindex="-1" aria-label="Show password">👁️</button>
             </div>
           </label>
+          <p class="forgot-row" id="forgotRow"><button id="forgotBtn" class="linkish" type="button">Forgot your password?</button></p>
           <button id="authSubmit" class="primary" type="submit">Log in</button>
         </form>
+
+        <form id="forgotForm" novalidate hidden>
+          <p class="hint">Enter your email and we'll send you a link to set a new password.</p>
+          <label class="field">
+            <span>Email</span>
+            <input id="forgotEmail" type="email" placeholder="you@example.com" autocomplete="email" inputmode="email" required />
+          </label>
+          <button id="forgotSubmit" class="primary" type="submit">Send reset link</button>
+          <p class="quiet-link"><button id="forgotCancel" class="linkish" type="button">Back to log in</button></p>
+        </form>
+
         <p class="hint" id="authHint"></p>
 
         <div id="guestBox" class="guest-box" hidden>
@@ -82,6 +102,28 @@
         </div>
       </div>
       <footer class="lobby-foot">Your account is stored securely on Cloudflare · passwords are hashed</footer>
+    </section>
+
+    <!-- ======================= SET A NEW PASSWORD ======================= -->
+    <section id="resetScreen" class="auth-screen" hidden>
+      <div class="auth-card">
+        <div class="brand">
+          <div class="brand-logo">🎥</div>
+          <div>
+            <div class="brand-name">Zoomlike</div>
+            <div class="brand-sub">Choose a new password</div>
+          </div>
+        </div>
+        <form id="resetForm" novalidate>
+          <label class="field">
+            <span>New password</span>
+            <input id="resetPassword" type="password" placeholder="At least 6 characters" autocomplete="new-password" required />
+          </label>
+          <button id="resetSubmit" class="primary" type="submit">Set password and sign in</button>
+        </form>
+        <p class="hint" id="resetHint"></p>
+        <p class="quiet-link"><button id="resetCancel" class="linkish" type="button">Back to log in</button></p>
+      </div>
     </section>
 
     <!-- ============================ LOBBY ============================ -->
