@@ -3,7 +3,7 @@
 A Zoom-like meeting app with a **collaborative whiteboard as the primary feature**, plus peer-to-peer video/audio, screen share, chat, recording, scheduling, waiting room, breakout rooms, host controls and virtual backgrounds. It runs **entirely on Cloudflare's free tier** with **no build step** (vanilla ES modules).
 
 - **Live URL:** https://ancient-grass-94b8.yasser-ghallab-mm.workers.dev
-- **Repo:** `yassowgh/Zoomlike` — active branch **`claude/cloudflare-zoom-app-o5xnvb`**
+- **Repo:** `yassowgh/Zoomlike` — default branch **`claude/cloudflare-zoom-app-o5xnvb`**, current work on **`claude/project-setup-ci-xeqtcc`**
 - **Cloudflare account id:** `8831301adf4783f131f995656cbb8eec` · workers.dev subdomain `yasser-ghallab-mm` · Worker name `ancient-grass-94b8`
 
 > This file is the single source of truth for continuing development. Read it fully before changing anything.
@@ -19,7 +19,7 @@ A Zoom-like meeting app with a **collaborative whiteboard as the primary feature
 | Video/audio transport | **WebRTC peer-to-peer mesh** | Free. Good for ~2–8 people. STUN + free public TURN. |
 | Auth | **Custom, Cloudflare-native** | Email+password (PBKDF2), stateless HS256 JWT. No Firebase. |
 | Frontend | **Vanilla JS ES modules + CSS** | No framework, no bundler, no build step. |
-| CI/CD | **GitHub Actions** (`.github/workflows/deploy.yml`) | Deploys on push to `main`. |
+| CI/CD | **GitHub Actions** (`.github/workflows/deploy.yml`) | Deploys on push to `main` — but see §11: **there is no `main` branch**, so it has never run. |
 
 **Runtime CDN libraries** (loaded lazily in the browser, not bundled):
 - MediaPipe Selfie Segmentation — `cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation` (virtual backgrounds)
@@ -34,7 +34,8 @@ There is **no CSP header** set by the Worker, so these CDNs load fine. If you ad
 
 ```
 wrangler.toml            Cloudflare config: assets + 2 Durable Object bindings + migrations + vars
-package.json             scripts: dev / deploy / tail (only devDep: wrangler)
+package.json             scripts: dev / deploy / tail / test:e2e (devDeps: wrangler, playwright)
+tests/e2e.mjs            End-to-end smoke test (two browsers + a phone viewport) — see §9
 .github/workflows/deploy.yml   GitHub Actions → wrangler deploy on push to main
 .dev.vars                LOCAL secrets for `wrangler dev` (gitignored) — contains AUTH_SECRET for dev
 
@@ -107,7 +108,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=8831301adf4783f131f995656cbb8eec 
 - `GET  /api/auth/me` (Bearer) → `{email,name,guest}`
 - `POST /api/auth/guest` `{name}` → `{email:"",name,guest:true,token}` (invited users, no account)
 - `GET  /api/meetings` (Bearer, non-guest) → `{meetings:[…]}`
-- `POST /api/meetings` `{title,when,room}` → meeting; also sets the room's owner = caller
+- `POST /api/meetings` `{title,when,room,access}` → meeting; also sets the room's owner = caller and its access mode (`"open"` | `"approval"`, default approval)
 - `DELETE /api/meetings/:id` (Bearer)
 - `GET  /api/config` → `{recordingUploadUrl, iceServers}`
 - `GET  /api/room/:id/ws?name=&token=&skip=` → WebSocket upgrade. **JWT is verified here**; the trusted `name`/`email`/`guest` are taken from the token (query `name` is overwritten). Routes to the room's DO stub.
@@ -118,14 +119,23 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=8831301adf4783f131f995656cbb8eec 
 - **`AUTH`** — `idFromName("global")`, single instance for all accounts + schedules.
 
 ### DO storage keys
-`RoomDurableObject`:
+`RoomDurableObject` — keys marked **(session)** are wiped when the host ends
+the meeting; the rest describe the room and survive:
 - `seq` (number) — monotonic join counter
 - `owner` (string email) — the host identity
-- `waiting` (bool, default true) — waiting room on/off
-- `allowDraw` (bool, default false) — everyone-can-draw
-- `allowShare` (bool, default false) — everyone-can-share
-- `breakouts` (string[]) — sub-room ids currently open
-- `shape:<id>` — one whiteboard object each (persisted board)
+- `waiting` (bool, default true) — waiting room on/off; set from the access
+  mode chosen when the meeting was created
+- `allowDraw` (bool, default false) — everyone-can-draw **(session)**
+- `allowShare` (bool, default false) — everyone-can-share **(session)**
+- `boardOn` (bool, default true) — is the whiteboard enabled at all **(session)**
+- `boardBg` (string, default `"dark"`) — shared board background **(session)**
+- `spotlight` (connId or absent) — who the host has spotlighted **(session)**
+- `breakouts` (string[]) — sub-room ids currently open **(session)**
+- `shape:<id>` — one whiteboard object each (persisted board) **(session)**
+
+Per-socket attachment also carries `grantShare` / `grantRecord`: permission the
+host granted to *that person*, kept separate from the meeting-wide
+`allowDraw`/`allowShare` toggles so revoking one does not strand the other.
 
 `AuthDurableObject`:
 - `user:<email>` → `{email,name,salt,hash,createdAt}` (PBKDF2 SHA-256, 100k iters, 16-byte salt, hex)
@@ -142,7 +152,7 @@ Client→server (`room.js` `webSocketMessage`). Non-`hello` messages are ignored
 
 | type | payload | who |
 |---|---|---|
-| `hello` | — | everyone (first msg) |
+| `hello` | `{access?}` | everyone (first msg; `access` is `"open"`/`"approval"` and only applies if this join is what creates the room) |
 | `signal` | `{to, data}` | admitted (WebRTC SDP/ICE relay) |
 | `screen` | `{on, streamId}` | admitted (announce screen share stream id) |
 | `draw` | `{shape}` | draw-permitted (add or update an object; persisted) |
@@ -159,7 +169,13 @@ Client→server (`room.js` `webSocketMessage`). Non-`hello` messages are ignored
 | `admit` / `deny` | `{id}` | host (waiting room) |
 | `waiting-toggle` | `{on}` | host |
 | `allow-draw` / `allow-share` | `{on}` | host |
-| `end-session` | — | host |
+| `share-request` | — | admitted (asks the host to allow screen share) |
+| `record-request` | — | admitted (asks the host to allow recording) |
+| `share-decision` / `record-decision` | `{target, ok}` | host |
+| `board-toggle` | `{on}` | host (whiteboard on/off for the meeting) |
+| `board-bg` | `{bg}` | host (shared board background) |
+| `spotlight` | `{target}` (null clears) | host |
+| `end-session` | — | host (also resets the room, see §6) |
 | `breakout-open` | `{rooms:[{room,name,members:[connId]}]}` | host |
 | `breakout-close` | — | host |
 
@@ -167,7 +183,7 @@ Server→client:
 
 | type | payload |
 |---|---|
-| `welcome` | `{self, host, owner, peers:[{id,name}], board:[shape…], waiting, allowDraw, allowShare, canDraw, canShare}` |
+| `welcome` | `{self, host, owner, peers:[{id,name}], board:[shape…], waiting, allowDraw, allowShare, boardOn, boardBg, spotlight, grantShare, grantRecord, canDraw, canShare, canRecord}` |
 | `waiting` | — (you're in the waiting room) |
 | `wait-request` | `{id,name}` (to host) |
 | `denied` | — |
@@ -185,6 +201,11 @@ Server→client:
 | `removed` | `{by}` |
 | `waiting-state` | `{on}` |
 | `perm` | `{what:'draw'|'share', on}` |
+| `board-state` | `{on}` (whiteboard enabled/disabled) |
+| `board-bg` | `{bg}` (shared board background) |
+| `spotlight` | `{id}` (null clears) |
+| `share-request` / `record-request` | `{id,name}` (to host) |
+| `share-decision` / `record-decision` | `{ok, by}` (to the requester) |
 | `session-end` | — |
 | `breakout-open` | `{room, roomName}` |
 | `breakout-close` | — |
@@ -199,6 +220,49 @@ Internal DO-to-DO (HTTP with `X-Internal` header): `broadcast` (relay a message 
 - `owner` is the first **non-guest** email to join a room, persisted; or preset by scheduling (`set-owner`).
 - The **host** is the connected admitted socket whose `email === owner`. Recomputed on join/leave and re-broadcast via `host`. If the owner isn't present, there is no host (participants wait — "waiting for host").
 - Host actions are enforced server-side (`isHost` check in `room.js`).
+
+### Ending a meeting resets the room
+`end-session` broadcasts `session-end`, wipes every **(session)** storage key
+listed above (whiteboard included), and closes all sockets. `owner` and
+`waiting` survive, so the same person still hosts the room and it still opens
+the same way next time. Clients tear down locally and stop reconnecting.
+
+### Access mode
+Chosen when the meeting is created — "anyone with the link" or "I approve each
+person" — and stored as `waiting`. Scheduling sets it through the internal
+`set-owner` call; an ad-hoc room takes it from the `access` field on the
+creating user's `hello`. It is still changeable mid-meeting with the host's
+waiting-room toggle.
+
+### Joining from an invite link
+Opening `/room/<id>` never shows the login form. A remembered display name
+(`localStorage.zl_name`) joins silently; otherwise a name-only card asks once,
+takes a guest token, and joins. Signing in is an opt-in link on that card.
+
+### View layouts (per viewer)
+`state.layout` is `board` | `speaker` | `gallery` and `state.strip` is
+`right` | `bottom` | `hidden`; both persist in `localStorage`. `applyLayout()`
+computes an *effective* layout — a shared screen wins, then an active
+spotlight, then a disabled whiteboard falls back to speaker — without ever
+rewriting the viewer's stored preference, so it returns when the override
+lifts.
+
+### Permission model
+Three independent sources, recombined by `recomputePerms()`:
+1. being the host,
+2. the meeting-wide `allowDraw` / `allowShare` toggles,
+3. a personal `grantShare` / `grantRecord` from the host, held per socket.
+
+Pressing Share or Record without permission sends `share-request` /
+`record-request` to the host, who allows or denies it from the participants
+panel. Screen share is enforced server-side; **recording is not, and cannot
+be** — a determined participant can always run a screen recorder. Treat the
+recording gate as a policy control, the same as Zoom's.
+
+### Spotlight
+The host spotlights someone from the participants panel; every client switches
+to the speaker stage and shows that person until it is cleared. It is cleared
+automatically if the spotlighted person leaves.
 
 ### Auth / sessions
 - JWT HS256, payload `{email,name,exp,guest?}`, 7-day expiry, signed with `AUTH_SECRET`.
@@ -230,7 +294,8 @@ World coordinates; each viewer has a personal viewport `{scale, panX, panY}` (pa
 
 ## 7. Feature inventory (all implemented & deployed)
 
-Auth/registration · guest join via invite link · lobby · **whiteboard** (pen, line, rect, ellipse, arrow, inline text, eraser, images, select/move/resize/lock/delete, undo, clear, zoom, pan, backgrounds, PNG/PDF export) · live cursors · **WebRTC** camera/mic · **screen share as a main stage (camera continues)** · gallery grid view · chat (public + private) · reactions · raise/lower hand · **participants panel** · **host controls** (mute all, mute one, remove, lower all hands) · **waiting room + admit/deny** · **host = meeting creator** · **draw & share permissions** (host toggles) · **end meeting for all** · **breakout rooms** · **scheduled meetings** · **virtual camera backgrounds** · **session recording** (seekable, save locally or to your server).
+Auth/registration · **one-tap join from an invite link (no account)** · lobby ·
+**meeting access mode (open / host approves)** · **whiteboard** (pen, line, rect, ellipse, arrow, inline text, eraser, images, select/move/resize/lock/delete, undo, clear, zoom, pan, backgrounds, PNG/PDF export) · live cursors · **WebRTC** camera/mic · **screen share as a main stage (camera continues)** · gallery grid view · chat (public + private) · reactions · raise/lower hand · **participants panel** · **host controls** (mute all, mute one, remove, lower all hands) · **waiting room + admit/deny** · **host = meeting creator** · **draw & share permissions** (host toggles) · **end meeting for all** · **breakout rooms** · **scheduled meetings** · **virtual camera backgrounds** · **session recording** (seekable, save locally or to your server) · **whiteboard on/off for the meeting** · **shared board background set by the host** · **spotlight** · **switchable layouts (whiteboard / speaker / gallery, strip side / bottom / hidden)** · **share & record permission requests** · **room reset when the meeting ends** · **phone-first control bar**.
 
 ---
 
@@ -243,14 +308,36 @@ Auth/registration · guest join via invite link · lobby · **whiteboard** (pen,
 - **Images** are stored as data URLs in DO storage (SQLite value limit ~2 MiB) and broadcast over WS — keep them downscaled; the persist is wrapped in try/catch so a too-large image still shows live but may not persist for late joiners.
 - **Whiteboard move/resize** sync the **final** state on pointer-up (no live intermediate frames).
 - **Draw/share permission** is a global host toggle — there is no per-user request/approve flow yet.
-- **No automated tests** live in the repo (see §9). No rate limiting. Old rooms' DO storage is never garbage-collected.
+- **Recording permission is advisory.** The host's approval gates the app's own recorder; nothing can stop someone screen-recording their device. Same as Zoom.
+- **Speaker view has no active-speaker detection yet.** Without a spotlight it shows the first remote peer. Adding a WebAudio analyser (see §10.2) is what makes it behave like Zoom.
+- **Board background is host-only** now that it is shared state; participants can no longer set their own.
+- A **phone always uses the bottom strip**, whichever strip position the viewer picked — a side strip does not fit.
+- The e2e test in §9 needs a **local** `wrangler dev`; there is no unit test for the DO logic yet. No rate limiting. Old rooms' DO storage is never garbage-collected.
 - Recording of the **shared screen** is not included in the composite.
 
 ---
 
-## 9. How this was tested (no test suite in repo)
+## 9. Testing
 
-Testing was done ad-hoc with Playwright against a **local** `wrangler dev`:
+`tests/e2e.mjs` is a committed end-to-end smoke test. It drives two desktop
+browser contexts plus a phone viewport against a **local** `wrangler dev` and
+asserts on the real UI and on live app state (`window.__zl_state`, exposed by
+`main.js` for exactly this purpose). 38 checks covering: register/login, the
+invite-link quick join, access modes, waiting room admit, P2P media actually
+flowing, whiteboard sync, board on/off, shared background, layouts and their
+persistence, spotlight (including that clearing it restores each viewer's own
+layout), share/record permission requests, host mute/mute-all/remove, the phone
+control-bar collapse, and the room reset after the meeting ends.
+
+```bash
+npx wrangler dev --port 8787 --local   # in one shell
+npm run test:e2e                       # in another
+```
+It exits non-zero if anything fails and drops screenshots in
+`tests/screenshots/` (gitignored). Env overrides: `ZL_BASE`, `ZL_CHROMIUM`,
+`ZL_SHOTS`.
+
+Notes on the environment:
 ```bash
 npx wrangler dev --port 8787 --local   # in one shell
 # Playwright (chromium is preinstalled in the CC-web sandbox):
@@ -258,28 +345,41 @@ npx wrangler dev --port 8787 --local   # in one shell
 #   args: --use-fake-ui-for-media-stream --use-fake-device-for-media-stream --no-sandbox
 #   grant context permissions: ["camera","microphone"]
 ```
-Test against `http://127.0.0.1:8787` (the sandbox's egress proxy makes hitting the live workers.dev from headless Chromium unreliable; local Miniflare is the reliable target). Fake media lets two contexts establish real P2P locally. Things that can't be exercised headlessly: `getDisplayMedia` (screen share), MediaPipe/jsPDF/fix-webm CDN loads, the native Save dialog — verify those in a real browser.
+Test against `http://127.0.0.1:8787` (the sandbox's egress proxy makes hitting the live workers.dev from headless Chromium unreliable; local Miniflare is the reliable target). Fake media lets two contexts establish real P2P locally. Things that can't be exercised headlessly: `getDisplayMedia` (screen share), MediaPipe/jsPDF/fix-webm CDN loads, the native Save dialog — verify those in a real browser. The share **request/approve** flow is covered; the actual capture that follows is not.
 
-Consider adding a real suite: `@playwright/test` for the flows above, plus `vitest` + `@cloudflare/vitest-pool-workers` for the DO logic (host election, waiting-room admit, permission gating).
+Still worth adding: `vitest` + `@cloudflare/vitest-pool-workers` for the DO logic directly (host election, admit, permission gating, session reset).
 
 ---
 
 ## 10. Suggested next steps
 
-1. Per-user draw/share **request → approve** (not just a global toggle) — reuse the waiting-room request/relay pattern.
-2. **Active-speaker** detection (WebAudio analyser per stream) → highlight tile / auto-promote in gallery.
+1. Per-user **draw** request → approve. Share and record now work this way (§6); drawing is still only the global toggle, and should follow the same pattern.
+2. **Active-speaker** detection (WebAudio analyser per stream) → highlight tile and drive speaker view, which currently falls back to the first remote peer when nothing is spotlighted.
 3. Include the **shared screen** in recordings; optionally record locally per-user or via an SFU egress.
 4. **Reconnection resync**: on WS reconnect, re-request the roster/board (currently relies on the reconnect + welcome).
 5. **Mobile/RTL polish** (this is Yasser's standing requirement: ≥44px targets, 360px width, Arabic `dir="rtl"` where relevant).
 6. Move to **Cloudflare Realtime (SFU)** for large rooms; add **Cloudflare Realtime TURN** for guaranteed connectivity.
-7. Commit an automated test suite and wire it into the GitHub Action before deploy.
+7. Wire `npm run test:e2e` into the GitHub Action before deploy (the test exists now; CI does not run it).
 8. Garbage-collect stale room DOs (e.g., clear `shape:*` when a room has been empty for N days).
 
 ---
 
 ## 11. Environment notes for the next Claude/dev
 
-- This repo is developed via **Claude Code on the web** (ephemeral container, repo cloned fresh). Commit + push anything worth keeping. Designated branch: `claude/cloudflare-zoom-app-o5xnvb`.
-- Deploying needs the user's Cloudflare API token in-session (they create an "Edit Cloudflare Workers" token, paste it, and delete it afterward). Never commit tokens. `AUTH_SECRET` is a Cloudflare secret, not in git.
+- This repo is developed via **Claude Code on the web** (ephemeral container, repo cloned fresh). Commit + push anything worth keeping.
+- **CI has never fired.** `deploy.yml` triggers on push to `main`, and there is
+  no `main` branch — the default branch is `claude/cloudflare-zoom-app-o5xnvb`.
+  This is still **unresolved**: either create `main` (and point the repo's
+  default branch at it) or repoint the workflow trigger. The workflow also has
+  `workflow_dispatch`, so a manual run is possible today.
+- **Cloudflare's API is blocked from cloud sessions**, so `wrangler deploy`,
+  `wrangler secret put` and `wrangler tail` all fail from here. Deploys go
+  through GitHub Actions or a local machine. `wrangler dev --local` is
+  unaffected, and is what the e2e test targets.
+- Deploying needs the user's Cloudflare API token (an "Edit Cloudflare Workers" token, pasted in and deleted afterward). Never commit tokens. `AUTH_SECRET` is a Cloudflare secret, not in git.
+- `playwright` is a declared devDependency. It used to be in the lockfile but
+  undeclared, so every `npm install` pruned it; don't undo that.
 - No build step: edit files, `wrangler dev` to test, `wrangler deploy` to ship. After deploying, hard-refresh the site (assets are cached).
-- Keep commit messages free of any model/assistant identifiers per repo convention.
+- **Keep commit messages free of any model/assistant identifiers** per repo
+  convention — no `Co-Authored-By` or session trailers. (Commits before
+  `29b2765` predate this and still carry them.)
