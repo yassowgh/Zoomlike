@@ -6,6 +6,7 @@ import { Whiteboard } from "./whiteboard.js";
 import { Mesh } from "./rtc.js";
 import { Recorder } from "./recorder.js";
 import { VirtualBg } from "./virtualbg.js";
+import { SpeakerDetector } from "./speaking.js";
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -21,7 +22,7 @@ const el = {
   controls: $("controls"), moreCtrlBtn: $("moreCtrlBtn"), toolsBtn: $("toolsBtn"),
   spotStage: $("spotStage"), spotVideo: $("spotVideo"), spotWho: $("spotWho"),
   spotTag: $("spotTag"), spotEmpty: $("spotEmpty"),
-  requestWrap: $("requestWrap"), requestList: $("requestList"),
+  requestWrap: $("requestWrap"), requestList: $("requestList"), recBanner: $("recBanner"),
   endedModal: $("endedModal"), endedOk: $("endedOk"),
   quickJoin: $("quickJoin"), qjForm: $("qjForm"), qjName: $("qjName"), qjRoom: $("qjRoom"),
   qjHint: $("qjHint"), qjSignIn: $("qjSignIn"), qjSubmit: $("qjSubmit"),
@@ -91,6 +92,10 @@ const state = {
   screenActive: null, screenDismissed: false,
   // Host-side queue of pending "may I share / record?" asks.
   requests: new Map(),
+  // connId -> name for everyone currently recording, so the room can show it.
+  recorders: new Map(),
+  // Active-speaker detection: loudest right now, and the last non-self speaker.
+  speech: null, activeSpeaker: null, lastRemoteSpeaker: null,
   access: "approval",
 };
 const isHost = () => state.selfId && state.selfId === state.host;
@@ -331,12 +336,25 @@ function applyLayout() {
   localStorage.setItem("zl_strip", state.strip);
 }
 
-// Who gets the big tile in speaker view: the host's spotlight if there is one,
-// otherwise a peer, otherwise you.
+// Who gets the big tile in speaker view: the host's spotlight wins, then
+// whoever spoke last (excluding you, so your own face doesn't take the stage
+// every time you talk), then any peer, then you.
 function pickSpeaker() {
   if (state.spotlight) return state.spotlight;
+  if (state.lastRemoteSpeaker && state.peers.has(state.lastRemoteSpeaker)) return state.lastRemoteSpeaker;
   const first = state.peers.keys().next();
   return first.done ? state.selfId : first.value;
+}
+
+// Outline whoever is talking, and swing the speaker stage to them.
+function onSpeechChange(active, remote) {
+  state.activeSpeaker = active;
+  state.lastRemoteSpeaker = remote;
+  for (const [tid, t] of state.tiles) {
+    const realId = tid === "self" ? state.selfId : tid;
+    t.div.classList.toggle("speaking", !!active && (realId === active || tid === active));
+  }
+  if (!el.spotStage.hidden && !state.spotlight) renderSpotlight();
 }
 
 function renderSpotlight() {
@@ -364,8 +382,15 @@ function renderSpotlight() {
 // substitutes speaker view while the board is off, so turning the board back
 // on returns them to the whiteboard.
 function applyBoardState() {
-  el.boardToggleBtn.textContent = state.boardOn ? "🖊️ Turn whiteboard off" : "🖊️ Turn whiteboard on";
-  el.boardToggleBtn.hidden = !isHost();
+  // The host switches the board on and off; everyone else can only ask for it
+  // to be started, and only while it is off.
+  if (isHost()) {
+    el.boardToggleBtn.textContent = state.boardOn ? "🖊️ Turn whiteboard off" : "🖊️ Turn whiteboard on";
+    el.boardToggleBtn.hidden = false;
+  } else {
+    el.boardToggleBtn.textContent = "🖊️ Ask to start the whiteboard";
+    el.boardToggleBtn.hidden = state.boardOn;
+  }
   if (el.boardOnToggle) el.boardOnToggle.checked = state.boardOn;
   applyLayout();
 }
@@ -759,9 +784,11 @@ function setupControls() {
     state.sig?.send({ type: "board-toggle", on: el.boardOnToggle.checked });
   };
   el.boardToggleBtn.onclick = () => {
-    if (!isHost()) return;
     el.moreMenu.hidden = true;
-    state.sig?.send({ type: "board-toggle", on: !state.boardOn });
+    if (isHost()) { state.sig?.send({ type: "board-toggle", on: !state.boardOn }); return; }
+    // Starting the whiteboard is the host's call, so ask instead.
+    state.sig?.send({ type: "board-request" });
+    toast("Asked the host to start the whiteboard");
   };
   el.endMeetingBtn.onclick = () => {
     if (!isHost()) return;
@@ -963,6 +990,10 @@ function hideScreen() {
 
 function startRecording(target) {
   state.recTarget = target === "server" ? "server" : "computer";
+  // Tell the room. The server consumes a non-host's permission here, so the
+  // next recording needs the host to approve it again.
+  state.sig?.send({ type: "recording", on: true });
+  if (!isHost()) { state.grantRecord = false; recomputePerms(); applyPermUI(); }
   const audio = [state.localStream, ...[...state.tiles.values()].map((t) => t.stream)].filter(Boolean);
   const bgColors = { dark: "#0e1730", white: "#ffffff", slate: "#334155", blue: "#0b3d91", green: "#0f5132", grid: "#12203f", dots: "#12203f" };
   state.recorder.start({
@@ -977,6 +1008,7 @@ function startRecording(target) {
 }
 
 async function stopRecording() {
+  state.sig?.send({ type: "recording", on: false });
   el.recBtn.classList.remove("rec-on");
   el.connState.classList.remove("rec");
   el.connState.textContent = "connected"; el.connState.classList.add("ok");
@@ -985,6 +1017,7 @@ async function stopRecording() {
     server: "Recording uploaded to your server ✓",
     chosen: "Recording saved ✓",
     downloads: "Recording saved to Downloads ✓",
+    opened: "Recording opened — use the share button to save it to Files",
     cancelled: "Save cancelled — recording discarded",
   }[res?.where] || "Recording saved";
   toast(msg);
@@ -992,6 +1025,7 @@ async function stopRecording() {
 
 function leave() {
   try { state.recorder?.recording && state.recorder.stop(state.roomId); } catch {}
+  state.speech?.stop();
   state.sig?.close();
   state.mesh?.closeAll();
   state.localStream?.getTracks().forEach((t) => t.stop());
@@ -1015,6 +1049,9 @@ function connect() {
   mesh.setLocalStream(state.localStream);
   state.mesh = mesh;
 
+  state.speech = new SpeakerDetector(onSpeechChange);
+  state.speech.add("self", state.localStream);
+
   sig.addEventListener("open", () => { el.connState.textContent = "connected"; el.connState.classList.add("ok"); });
   sig.addEventListener("close", () => { el.connState.textContent = "reconnecting…"; el.connState.classList.remove("ok"); });
 
@@ -1027,6 +1064,7 @@ function connect() {
     const { self, host, peers, board, waiting,
             allowDraw, allowShare, boardOn, boardBg, spotlight } = e.detail;
     state.selfId = self; state.host = host; state.waiting = waiting !== false;
+    state.speech?.setSelfId(self);
     state.allowDraw = !!allowDraw; state.allowShare = !!allowShare;
     state.grantShare = !!e.detail.grantShare; state.grantRecord = !!e.detail.grantRecord;
     state.boardOn = boardOn !== false;
@@ -1072,6 +1110,18 @@ function connect() {
     applyPermUI();
     toast(e.detail.ok ? "The host allowed screen sharing — press Share" : "The host declined your screen share request");
   });
+  sig.addEventListener("recording-state", (e) => {
+    const { id, name, on } = e.detail;
+    if (on) state.recorders.set(id, name); else state.recorders.delete(id);
+    updateRecordingBanner();
+    if (id !== state.selfId) toast(on ? `⏺️ ${name} started recording` : `⏹️ ${name} stopped recording`);
+  });
+
+  sig.addEventListener("board-decision", (e) => {
+    toast(e.detail.ok ? "The host started the whiteboard" : "The host declined to start the whiteboard");
+  });
+  sig.addEventListener("board-request", (e) => addRequest("board", e.detail.id, e.detail.name));
+
   sig.addEventListener("record-decision", (e) => {
     state.grantRecord = !!e.detail.ok;
     recomputePerms();
@@ -1093,6 +1143,7 @@ function connect() {
     // server-side, so there is nothing left to rejoin.
     try { state.recorder?.recording && state.recorder.stop(state.roomId); } catch {}
     state.sig?.close();
+    state.speech?.stop();
     state.mesh?.closeAll();
     state.localStream?.getTracks().forEach((t) => t.stop());
     el.endedModal.hidden = false;
@@ -1150,7 +1201,8 @@ function connect() {
     const p = state.peers.get(e.detail.id);
     mesh.removePeer(e.detail.id);
     state.peers.delete(e.detail.id);
-    for (const kind of ["share", "record"]) state.requests.delete(`${kind}:${e.detail.id}`);
+    for (const kind of ["share", "record", "board"]) state.requests.delete(`${kind}:${e.detail.id}`);
+    if (state.recorders.delete(e.detail.id)) updateRecordingBanner();
     renderPeople(); refreshChatTo(); renderRequests(); applyLayout();
     if (p) toast(`${p.name} left`);
   });
@@ -1215,6 +1267,7 @@ function addTile(id, name, stream, isSelf = false) {
   }
   tile.stream = stream;
   tile.video.srcObject = stream;
+  state.speech?.add(id, stream);
   tile.label.textContent = name + (isSelf ? " (you)" : "");
   tile.video.play?.().catch(() => {});
   // Reflect current roster state.
@@ -1238,6 +1291,7 @@ function refreshTileHostBadges() {
 function removeTile(id) {
   const t = state.tiles.get(id);
   if (t) { t.div.remove(); state.tiles.delete(id); }
+  state.speech?.remove(id);
 }
 function refreshSelfTile(stream) {
   const t = state.tiles.get("self");
@@ -1315,7 +1369,7 @@ function updateHostUI() {
   renderWaiting();
   renderRequests();
   refreshTileHostBadges();
-  el.boardToggleBtn.hidden = !isHost();
+  applyBoardState();
 }
 
 // Pending "may I share / record?" asks, shown to the host in the people panel.
@@ -1329,7 +1383,7 @@ function renderRequests() {
     row.className = "prow req-row";
     const txt = document.createElement("span");
     txt.className = "rtext";
-    txt.textContent = `${req.name} wants to ${req.kind === "share" ? "share their screen" : "record"}`;
+    txt.textContent = `${req.name} wants to ${REQUEST_WORDING[req.kind] || req.kind}`;
     const ok = document.createElement("button");
     ok.className = "pact approve"; ok.textContent = "Allow";
     ok.onclick = () => decideRequest(key, req, true);
@@ -1341,8 +1395,15 @@ function renderRequests() {
   }
 }
 
+const REQUEST_WORDING = {
+  share: "share their screen",
+  record: "record the meeting",
+  board: "start the whiteboard",
+};
+const DECISION_MSG = { share: "share-decision", record: "record-decision", board: "board-decision" };
+
 function decideRequest(key, req, ok) {
-  state.sig?.send({ type: req.kind === "share" ? "share-decision" : "record-decision", target: req.id, ok });
+  state.sig?.send({ type: DECISION_MSG[req.kind], target: req.id, ok });
   state.requests.delete(key);
   renderRequests();
   toast(ok ? `Allowed ${req.name}` : `Denied ${req.name}`);
@@ -1352,7 +1413,7 @@ function addRequest(kind, id, name) {
   state.requests.set(`${kind}:${id}`, { kind, id, name });
   renderRequests();
   if (el.people.hidden) { el.people.hidden = false; renderPeople(); }
-  toast(`✋ ${name} is asking to ${kind === "share" ? "share their screen" : "record"}`);
+  toast(`✋ ${name} is asking to ${REQUEST_WORDING[kind] || kind}`);
 }
 
 function renderWaiting() {
@@ -1405,6 +1466,15 @@ function showReaction(name, emoji) {
 }
 
 // -------------------------------------------------------------- helpers
+// A visible marker whenever anyone in the room is recording.
+function updateRecordingBanner() {
+  const names = [...state.recorders.values()];
+  const mine = state.recorder?.recording;
+  el.recBanner.hidden = names.length === 0;
+  if (names.length) el.recBanner.textContent = `⏺️ Recording — ${names.join(", ")}`;
+  el.recBtn.classList.toggle("rec-on", !!mine);
+}
+
 function syncTopbarHeight() {
   const tb = document.querySelector(".topbar");
   if (tb && tb.offsetHeight) document.documentElement.style.setProperty("--topbar-h", tb.offsetHeight + "px");

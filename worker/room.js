@@ -242,6 +242,40 @@ export class RoomDurableObject {
         this.send(host.ws, { type: "record-request", id: self.connId, name: self.name });
         break;
       }
+      // Turning the whiteboard on is the host's call, so anyone else asks.
+      case "board-request": {
+        if (isHost) {
+          await this.state.storage.put("boardOn", true);
+          this.broadcastAdmitted({ type: "board-state", on: true });
+          break;
+        }
+        const host = this.hostSocket(owner);
+        if (!host) { this.send(ws, { type: "board-decision", ok: false, by: "" }); break; }
+        this.send(host.ws, { type: "board-request", id: self.connId, name: self.name });
+        break;
+      }
+      case "board-decision": {
+        if (!isHost) break;
+        const t = this.peers().find((p) => p.connId === msg.target);
+        if (!t) break;
+        if (msg.ok) {
+          await this.state.storage.put("boardOn", true);
+          this.broadcastAdmitted({ type: "board-state", on: true });
+        }
+        this.send(t.ws, { type: "board-decision", ok: !!msg.ok, by: self.name });
+        break;
+      }
+
+      // A recording is starting or stopping. Permission is consumed on start,
+      // so every separate recording needs the host to approve it again.
+      case "recording": {
+        if (msg.on) {
+          if (!isHost && !self.grantRecord) { this.send(ws, { type: "record-decision", ok: false, by: "" }); break; }
+          if (!isHost) this.setMeta(ws, { grantRecord: false });
+        }
+        this.broadcastAdmitted({ type: "recording-state", id: self.connId, name: self.name, on: !!msg.on });
+        break;
+      }
       case "share-decision": {
         if (!isHost) break;
         const t = this.peers().find((p) => p.connId === msg.target);

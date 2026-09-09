@@ -489,3 +489,12 @@ input { font: inherit; }
   .ctrl-more { display: flex; }
   .tools-btn { display: grid; }
 }
+
+/* Recording marker, visible to everyone in the room */
+.rec-banner {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(var(--topbar-h) + 8px); z-index: 27;
+  background: var(--danger); color: #fff; font-size: 12px; font-weight: 600;
+  padding: 4px 12px; border-radius: 999px; box-shadow: 0 6px 18px rgba(0,0,0,.4);
+  max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
