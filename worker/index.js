@@ -31,7 +31,12 @@ export default {
     // Guest access: invited people can join without creating an account.
     if (url.pathname === "/api/auth/guest") {
       const body = await request.json().catch(() => ({}));
-      const name = (body.name || "Guest").toString().trim().slice(0, 40) || "Guest";
+      const name = (body.name || "").toString().trim().slice(0, 40);
+      // Everyone in a meeting has to be identifiable, so a guest must give a
+      // real name. "Guest" is not one — several of them are indistinguishable.
+      if (name.length < 2 || /^guests?$/i.test(name)) {
+        return Response.json({ error: "Please enter your name so people know who you are." }, { status: 400 });
+      }
       const token = await issueToken({ email: "guest:" + crypto.randomUUID(), name, guest: true }, secret);
       return Response.json({ email: "", name, guest: true, token });
     }
@@ -181,6 +186,9 @@ export default {
         // Let the UI hide options this deployment cannot actually perform.
         googleAuth: googleConfigured(env),
         passwordReset: mailConfigured(env),
+        // Whether a real relay is configured. Without one, anybody behind a
+        // strict NAT (most mobile networks) cannot connect at all.
+        turn: !!(env.TURN_URLS || "").trim(),
       });
     }
 
