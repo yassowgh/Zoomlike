@@ -6,6 +6,13 @@
 // `board` renders committed objects; `overlay` shows the in-progress shape,
 // selection handles and remote cursors.
 
+// Text sizes are real world pixels, so the number you pick is the number you
+// get. 12 is the readable default.
+const DEFAULT_TEXT_SIZE = 12;
+const MIN_TEXT_SIZE = 8;
+const MAX_TEXT_SIZE = 160;
+const LINE_HEIGHT = 1.25;
+
 export class Whiteboard {
   constructor(boardCanvas, overlayCanvas, wrap) {
     this.board = boardCanvas;
@@ -20,7 +27,10 @@ export class Whiteboard {
 
     this.tool = "pen";
     this.color = "#ffd400";
-    this.size = 3;
+    this.size = 3;              // stroke width for drawn shapes
+    // Text carries its own size, in world pixels. It used to reuse the stroke
+    // width, so a default of 3 rendered text at about 5px — unreadable.
+    this.textSize = DEFAULT_TEXT_SIZE;
     this.canDraw = true;          // write permission
 
     this.view = { scale: 1, panX: 40, panY: 40 };
@@ -60,6 +70,17 @@ export class Whiteboard {
   setTool(t) { this.tool = t; this.select(null); }
   setColor(c) { this.color = c; if (this.selectedId) this._patch(this.selectedId, { color: c }); }
   setSize(s) { this.size = Number(s); }
+  setTextSize(s) {
+    this.textSize = Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, Number(s) || DEFAULT_TEXT_SIZE));
+    // Retype a selected text object at the new size straight away.
+    const sel = this.selectedId && this.objects.get(this.selectedId);
+    if (sel && sel.type === "text" && !sel.locked) {
+      sel.size = this.textSize;
+      this._measureText(sel);
+      this.redraw();
+      this.onUpdate(sel);
+    }
+  }
   setCanDraw(v) { this.canDraw = !!v; if (!v) this.select(null); }
 
   zoomBy(factor, cx, cy) {
@@ -239,7 +260,12 @@ export class Whiteboard {
     } else if (o.type === "rect" || o.type === "ellipse" || o.type === "line" || o.type === "arrow") {
       if (drag.handle === "se") { o.x2 = wx; o.y2 = wy; } else if (drag.handle === "nw") { o.x1 = wx; o.y1 = wy; }
     } else if (o.type === "text") {
-      o.size = Math.max(6, Math.min(120, s.size * ((wx - s.x) / ((s.w || 100) / this.view.scale)) || s.size));
+      // Scale the font by how far the corner moved relative to the original
+      // box, so dragging out makes it bigger and dragging in makes it smaller.
+      const startW = Math.max(20, s.w || 100);
+      const factor = Math.max(0.1, (wx - s.x) / startW);
+      o.size = Math.round(Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, s.size * factor)));
+      this._measureText(o);
     }
   }
 
@@ -255,12 +281,13 @@ export class Whiteboard {
   _openText(wx, wy, editId) {
     const ta = this.textInput;
     this._textCtx = { wx, wy, editId: editId || null };
-    let val = "", size = this.size, color = this.color;
+    let val = "", size = this.textSize, color = this.color;
     if (editId) { const o = this.objects.get(editId); val = o.text; size = o.size; color = o.color; this._textCtx.wx = o.x; this._textCtx.wy = o.y; this.objects.delete(editId); this.redraw(); }
+    this._textCtx.size = size;
     const [sx, sy] = this.toScreen(this._textCtx.wx, this._textCtx.wy);
     ta.style.left = sx / this.dpr + "px";
     ta.style.top = sy / this.dpr + "px";
-    ta.style.fontSize = Math.max(12, size * 1.6) * this.view.scale + "px";
+    ta.style.fontSize = size * this.view.scale + "px";
     ta.style.color = color;
     ta.value = val; ta.hidden = false; setTimeout(() => ta.focus(), 0);
   }
@@ -268,15 +295,16 @@ export class Whiteboard {
     const ta = this.textInput; if (ta.hidden) return;
     const text = ta.value.trim(); ta.hidden = true;
     if (!text || !this._textCtx) return;
-    const obj = { id: uid(), type: "text", x: this._textCtx.wx, y: this._textCtx.wy, text, size: this.size, color: this.color, mine: true, locked: false };
+    const size = this._textCtx.size || this.textSize;
+    const obj = { id: uid(), type: "text", x: this._textCtx.wx, y: this._textCtx.wy, text, size, color: this.color, mine: true, locked: false };
     this._measureText(obj);
     this._commit(obj);
     this._textCtx = null;
   }
   _measureText(o) {
-    const ctx = this.bctx; ctx.save(); ctx.font = `${o.size * 1.6}px system-ui, sans-serif`;
+    const ctx = this.bctx; ctx.save(); ctx.font = `${o.size}px system-ui, sans-serif`;
     const lines = o.text.split("\n"); let w = 0; for (const l of lines) w = Math.max(w, ctx.measureText(l).width);
-    o.w = w; o.h = lines.length * o.size * 1.9; ctx.restore();
+    o.w = w; o.h = lines.length * o.size * LINE_HEIGHT; ctx.restore();
   }
 
   // ---- hit testing -------------------------------------------------------
@@ -326,7 +354,7 @@ export class Whiteboard {
     else if (o.type === "line" || o.type === "arrow") { const [a, b] = P(o.x1, o.y1), [c, d] = P(o.x2, o.y2); ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke(); if (o.type === "arrow") this._arrow(ctx, a, b, c, d); }
     else if (o.type === "rect") { const [a, b] = P(o.x1, o.y1), [c, d] = P(o.x2, o.y2); ctx.strokeRect(a, b, c - a, d - b); }
     else if (o.type === "ellipse") { const [a, b] = P(o.x1, o.y1), [c, d] = P(o.x2, o.y2); ctx.beginPath(); ctx.ellipse((a + c) / 2, (b + d) / 2, Math.abs(c - a) / 2, Math.abs(d - b) / 2, 0, 0, 7); ctx.stroke(); }
-    else if (o.type === "text") { const [x, y] = P(o.x, o.y); ctx.textBaseline = "top"; ctx.font = `${o.size * 1.6 * this.view.scale * this.dpr}px system-ui, sans-serif`; o.text.split("\n").forEach((ln, i) => ctx.fillText(ln, x, y + i * o.size * 1.9 * this.view.scale * this.dpr)); }
+    else if (o.type === "text") { const [x, y] = P(o.x, o.y); ctx.textBaseline = "top"; ctx.font = `${o.size * this.view.scale * this.dpr}px system-ui, sans-serif`; o.text.split("\n").forEach((ln, i) => ctx.fillText(ln, x, y + i * o.size * LINE_HEIGHT * this.view.scale * this.dpr)); }
     else if (o.type === "image") { const img = this.images.get(o.id); const [x, y] = P(o.x, o.y); if (img && img.complete) { try { ctx.drawImage(img, x, y, o.w * this.view.scale * this.dpr, o.h * this.view.scale * this.dpr); } catch {} } else { ctx.strokeRect(x, y, o.w * this.view.scale * this.dpr, o.h * this.view.scale * this.dpr); } }
     ctx.restore();
   }

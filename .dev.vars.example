@@ -28,3 +28,14 @@ MAIL_FROM=
 
 # With none of the above set, the reset form tells the user that reset email
 # is not configured rather than pretending a message went out.
+
+# --- TURN relay (strongly recommended) ------------------------------------
+# Without a relay, anyone behind a strict NAT - which is most mobile networks -
+# cannot connect, and appears in the participant list with no video. The
+# built-in fallback is a free public relay that is no longer dependable.
+#
+# Cloudflare Realtime TURN has a free tier: dash.cloudflare.com -> Realtime ->
+# TURN -> create, then set these three as Worker variables/secrets.
+TURN_URLS=
+TURN_USERNAME=
+TURN_CREDENTIAL=

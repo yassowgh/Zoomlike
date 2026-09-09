@@ -54,7 +54,7 @@ const el = {
   guestBox: $("guestBox"), guestRoom: $("guestRoom"), guestName: $("guestName"), guestJoin: $("guestJoin"),
   board: $("board"), overlay: $("overlay"), boardWrap: $("boardWrap"),
   videos: $("videos"), toolbar: $("toolbar"),
-  colorPick: $("colorPick"), sizePick: $("sizePick"),
+  colorPick: $("colorPick"), sizePick: $("sizePick"), textSizePick: $("textSizePick"),
   undoBtn: $("undoBtn"), clearBtn: $("clearBtn"),
   micBtn: $("micBtn"), camBtn: $("camBtn"), shareBtn: $("shareBtn"),
   recBtn: $("recBtn"), chatBtn: $("chatBtn"), leaveBtn: $("leaveBtn"),
@@ -296,7 +296,9 @@ function showQuickJoin(room) {
   el.quickJoin.hidden = false; el.auth.hidden = true; el.lobby.hidden = true; el.room.hidden = true;
   el.qjRoom.textContent = room;
   const remembered = (localStorage.getItem("zl_name") || "").trim();
-  if (remembered) return quickJoinAs(remembered);
+  // A remembered *real* name skips the name card; "Guest" does not count,
+  // because a room full of Guests tells nobody anything.
+  if (realName(remembered)) return quickJoinAs(remembered);
   el.qjName.focus();
 }
 
@@ -304,7 +306,7 @@ function wireQuickJoin() {
   el.qjForm.onsubmit = (e) => {
     e.preventDefault();
     const name = el.qjName.value.trim().slice(0, 40);
-    if (!name) { el.qjName.focus(); return; }
+    if (!realName(name)) { el.qjHint.textContent = "Please enter your name."; el.qjName.focus(); return; }
     quickJoinAs(name);
   };
   // Escape hatch for people who do want their account (scheduling, hosting).
@@ -715,9 +717,16 @@ function renderSchedule(meetings) {
 // honour it when we already know their name, so nobody is ever dropped into a
 // meeting without having been asked who they are.
 const SKIP_PREJOIN_KEY = "zl_skip_prejoin";
+
+// Everyone in a meeting has to be identifiable, so a name is required and
+// "Guest" is not one.
+function realName(n) {
+  const t = String(n || "").trim();
+  return t.length >= 2 && !/^guests?$/i.test(t);
+}
 function prejoinSkipped() {
   try {
-    return localStorage.getItem(SKIP_PREJOIN_KEY) === "1" && !!(localStorage.getItem("zl_name") || "").trim();
+    return localStorage.getItem(SKIP_PREJOIN_KEY) === "1" && realName(localStorage.getItem("zl_name") || "");
   } catch { return false; }
 }
 function setPrejoinSkipped(on) {
@@ -795,7 +804,7 @@ function wirePrejoin() {
   el.pjSkip.onchange = () => setPrejoinSkipped(el.pjSkip.checked);
   el.pjJoin.onclick = () => {
     const name = el.pjName.value.trim().slice(0, 40);
-    if (!name) { el.pjHint.textContent = "Please enter your name."; el.pjName.focus(); return; }
+    if (!realName(name)) { el.pjHint.textContent = "Please enter your name."; el.pjName.focus(); return; }
     localStorage.setItem("zl_name", name);
     state.name = name;
     el.nameInput.value = name;
@@ -998,6 +1007,8 @@ function setupBoard() {
   });
   el.colorPick.oninput = () => wb.setColor(el.colorPick.value);
   el.sizePick.oninput = () => wb.setSize(el.sizePick.value);
+  wb.setTextSize(el.textSizePick.value);
+  el.textSizePick.oninput = () => wb.setTextSize(el.textSizePick.value);
   el.undoBtn.onclick = () => wb.undoMine();
   el.clearBtn.onclick = () => {
     if (!state.canDraw) return toast("You don't have drawing permission");
@@ -1472,6 +1483,23 @@ function connect() {
     iceServers: state.config?.iceServers || [{ urls: "stun:stun.l.google.com:19302" }],
     send: (to, data) => sig.send({ type: "signal", to, data }),
     onStream: (peerId, name, stream) => routeStream(peerId, name, stream),
+    onState: (peerId, connState) => {
+      const p = state.peers.get(peerId);
+      if (p) p.conn = connState;
+      warnIfNoRelay(connState);
+      const t = state.tiles.get(peerId);
+      if (t) {
+        t.div.dataset.conn = connState;
+        let n = t.div.querySelector(".tile-conn");
+        const label = connLabel(connState);
+        if (label) {
+          if (!n) { n = document.createElement("span"); n.className = "tile-conn"; t.div.appendChild(n); }
+          n.textContent = label;
+          n.className = "tile-conn " + connClass(connState);
+        } else if (n) n.remove();
+      }
+      renderPeople();
+    },
     onLeave: (peerId) => {
       removeTile(peerId); state.board?.removeCursor(peerId); state.seenStreams.delete(peerId);
       if (state.screenIds.has(peerId)) { state.screenIds.delete(peerId); hideScreen(); }
@@ -1907,64 +1935,85 @@ function personRow(id, name, s, self) {
   const row = document.createElement("div");
   row.className = "prow";
   row.dataset.pid = id;
+
+  // Two lines: who they are, then what you can do about them. These used to
+  // share one flex row, and with up to six buttons the name was squeezed down
+  // to an ellipsis — you could see "Make co-host" but not whose row it was.
+  const head = document.createElement("div");
+  head.className = "prow-head";
+  const acts = document.createElement("div");
+  acts.className = "prow-acts";
+  row.append(head, acts);
+
   const nm = document.createElement("span");
   nm.className = "pname";
   nm.textContent = name + (self ? " (you)" : "");
-  row.appendChild(nm);
-  if (id === state.host) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "Host"; row.appendChild(b); }
-  else if (s.moderator) { const b = document.createElement("span"); b.className = "badge cohost"; b.textContent = "Co-host"; row.appendChild(b); }
-  if (s.hand) { const h = document.createElement("span"); h.className = "pstate hand-up"; h.textContent = "✋"; row.appendChild(h); }
-  const st = document.createElement("span"); st.className = "pstate"; st.textContent = (s.mic ? "🎙️" : "🔇") + (s.cam ? "" : "🚫"); row.appendChild(st);
+  head.appendChild(nm);
 
-  if (!self) {
-    const dm = document.createElement("button");
-    dm.className = "pact"; dm.textContent = "Message";
-    dm.onclick = () => { el.chatTo.value = id; showPanel("chat"); el.chatInput.focus(); };
-    row.appendChild(dm);
-    // Only the host hands out co-host, so a co-host cannot promote others.
-    if (isHost()) {
-      const co = document.createElement("button");
-      co.className = "pact"; co.textContent = s.moderator ? "Remove co-host" : "Make co-host";
-      co.onclick = () => state.sig?.send({ type: "cohost", target: id, on: !s.moderator });
-      row.appendChild(co);
-    }
-    if (isModerator()) {
-      // Send this person into a specific breakout room.
-      if (state.breakoutRooms.length) {
-        const to = document.createElement("select");
-        to.className = "chat-select pact-select";
-        to.innerHTML = '<option value="">Move to…</option><option value="__main">Main room</option>';
-        for (const r of state.breakoutRooms) {
-          const o = document.createElement("option");
-          o.value = r.room; o.textContent = r.name || r.room;
-          to.appendChild(o);
-        }
-        to.onchange = () => {
-          if (!to.value) return;
-          const room = to.value === "__main" ? "" : to.value;
-          state.sig?.send({ type: "breakout-move", target: id, room, roomName: room, from: state.mainRoom ? state.roomId : "" });
-          toast(`Moving ${name}…`);
-          to.value = "";
-        };
-        row.appendChild(to);
+  const badge = (text, cls) => {
+    const b = document.createElement("span");
+    b.className = cls; b.textContent = text;
+    head.appendChild(b);
+  };
+  if (id === state.host) badge("Host", "badge");
+  else if (s.moderator) badge("Co-host", "badge cohost");
+  if (s.hand) badge("✋", "pstate hand-up");
+  badge((s.mic ? "🎙️" : "🔇") + (s.cam ? "" : "🚫"), "pstate");
+  // Whether their video is actually connected, so "in the meeting but nobody
+  // can see them" shows up as a state rather than a mystery.
+  if (!self && connLabel(s.conn)) badge(connLabel(s.conn), "pconn " + connClass(s.conn));
+
+  if (self) return row;
+
+  const action = (text, onClick) => {
+    const b = document.createElement("button");
+    b.className = "pact"; b.textContent = text; b.onclick = onClick;
+    acts.appendChild(b);
+    return b;
+  };
+
+  action("Message", () => { el.chatTo.value = id; showPanel("chat"); el.chatInput.focus(); });
+
+  // Only the host hands out co-host, so a co-host cannot promote others.
+  if (isHost()) {
+    action(s.moderator ? "Remove co-host" : "Make co-host",
+           () => state.sig?.send({ type: "cohost", target: id, on: !s.moderator }));
+  }
+
+  if (isModerator()) {
+    // Send this person into a specific breakout room.
+    if (state.breakoutRooms.length) {
+      const to = document.createElement("select");
+      to.className = "chat-select pact-select";
+      to.innerHTML = '<option value="">Move to…</option><option value="__main">Main room</option>';
+      for (const r of state.breakoutRooms) {
+        const o = document.createElement("option");
+        o.value = r.room; o.textContent = r.name || r.room;
+        to.appendChild(o);
       }
-      const spot = document.createElement("button");
-      const on = state.spotlight === id;
-      spot.className = "pact"; spot.textContent = on ? "📌 Unspotlight" : "📌 Spotlight";
-      spot.onclick = () => state.sig?.send({ type: "spotlight", target: on ? null : id });
-      row.appendChild(spot);
-      const mute = document.createElement("button");
-      mute.className = "pact"; mute.textContent = "Mute";
-      mute.onclick = () => { state.sig?.send({ type: "host-mute", target: id }); toast(`Muted ${name}`); };
-      row.appendChild(mute);
-      const rm = document.createElement("button");
-      rm.className = "pact"; rm.textContent = "Remove";
-      rm.onclick = () => { if (confirm(`Remove ${name} from the meeting?`)) state.sig?.send({ type: "host-remove", target: id }); };
-      row.appendChild(rm);
+      to.onchange = () => {
+        if (!to.value) return;
+        const room = to.value === "__main" ? "" : to.value;
+        state.sig?.send({ type: "breakout-move", target: id, room, roomName: room, from: state.mainRoom ? state.roomId : "" });
+        toast(`Moving ${name}…`);
+        to.value = "";
+      };
+      acts.appendChild(to);
     }
+    const spotOn = state.spotlight === id;
+    action(spotOn ? "📌 Unspotlight" : "📌 Spotlight",
+           () => state.sig?.send({ type: "spotlight", target: spotOn ? null : id }));
+    action("Mute", () => { state.sig?.send({ type: "host-mute", target: id }); toast(`Muted ${name}`); });
+    action("Remove", () => {
+      if (confirm(`Remove ${name} from the meeting?`)) state.sig?.send({ type: "host-remove", target: id });
+    });
   }
   return row;
 }
+
+const CONN_LABEL = { connected: "", connecting: "connecting…", checking: "connecting…", new: "connecting…", disconnected: "reconnecting…", failed: "no connection", closed: "no connection" };
+function connLabel(stateName) { return CONN_LABEL[stateName] ?? (stateName ? "connecting…" : ""); }
+function connClass(stateName) { return stateName === "failed" || stateName === "closed" ? "bad" : stateName === "connected" ? "ok" : "warn"; }
 
 function updateHostUI() {
   el.hostTools.hidden = !isModerator();
@@ -2092,11 +2141,27 @@ function showPanel(which) {
     const node = document.getElementById(id);
     if (node) node.hidden = id !== which;
   }
+  // On a wide screen the stage makes room for the panel rather than being
+  // covered by it, so the gallery stays fully visible alongside the chat.
+  el.room.classList.toggle("panel-open", !!which);
+  state.board?.resize();
+  if (!el.spotStage.hidden) renderSpotlight();
 }
 function closePanels() { showPanel(null); }
 function panelOpen(which) { return !document.getElementById(which)?.hidden; }
 
 // -------------------------------------------------------------- helpers
+// Connections fail for many reasons, but with no TURN relay configured the
+// overwhelmingly likely one is a strict NAT — most mobile networks. Say so
+// once, rather than leaving a blank tile with no explanation.
+let relayWarned = false;
+function warnIfNoRelay(connState) {
+  if (relayWarned || connState !== "failed") return;
+  if (state.config?.turn) return;
+  relayWarned = true;
+  toast("Someone couldn't connect. This meeting has no TURN relay configured, which usually blocks people on mobile data.");
+}
+
 // A visible marker whenever anyone in the room is recording.
 function updateRecordingBanner() {
   const names = [...state.recorders.values()];

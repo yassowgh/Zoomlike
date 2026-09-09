@@ -293,7 +293,7 @@ input { font: inherit; }
    A phone shows only what you need to be in the meeting. Secondary controls
    collapse behind "More", the drawing tools behind the toolbox button, and
    the topbar buttons drop their text labels. */
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 520px) {
   #roomTitle { max-width: 26vw; font-size: 14px; }
   .btxt { display: none; }
   .topbar { padding: 6px 8px; gap: 6px; }
@@ -484,7 +484,7 @@ input { font: inherit; }
 /* Phone-only reveals. These sit at the very end on purpose: the elements they
    show have their `display: none` defaults declared further up, and equal
    specificity means the last rule wins. */
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 520px) {
   .ctrl-more { display: flex; }
   .tools-btn { display: grid; }
 }
@@ -521,7 +521,7 @@ input { font: inherit; }
 .pj-toggles { display: flex; gap: 8px; margin: 4px 0 14px; }
 .pj-toggles .ghost { flex: 1; }
 .pj-toggles .ghost.off { border-color: var(--danger); color: #ffb4b4; }
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 520px) {
   .prejoin-card { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
   .prejoin-video { aspect-ratio: 16/10; }
 }
@@ -560,7 +560,7 @@ input { font: inherit; }
 .chat-row #chatInput { flex: 1; min-width: 0; }
 .chat-row .primary { flex: 0 0 auto; }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 520px) {
   /* A phone has no room for the meeting behind a panel, so panels take the
      whole screen. Declared here, after the base .side-panel width, because
      equal specificity means the last rule wins. */
@@ -575,4 +575,45 @@ input { font: inherit; }
   .topbar-right { flex: 1 1 auto; justify-content: flex-end; }
   #roomTitle { max-width: 40vw; }
   .pact { font-size: 12px; padding: 4px 8px; }
+}
+
+/* ============ Panels share the width instead of covering the room ============ */
+:root { --panel-w: min(340px, 92vw); }
+@media (min-width: 721px) and (min-height: 521px) {
+  .room.panel-open .stage { padding-right: var(--panel-w); }
+  .room.panel-open .controls { padding-right: calc(var(--panel-w) + 10px); }
+}
+
+/* Participants: name on one line, actions on the next. */
+.prow { flex-direction: column; align-items: stretch; gap: 6px; }
+.prow-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.prow-head .pname { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.prow-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.prow-acts:empty { display: none; }
+.pconn { font-size: 10px; border-radius: 6px; padding: 1px 6px; border: 1px solid transparent; }
+.pconn.ok   { color: var(--ok); }
+.pconn.warn { color: #fbbf24; border-color: #fbbf2455; }
+.pconn.bad  { color: #fff; background: var(--danger); }
+
+/* Same signal on the video tile, so an invisible participant is explained. */
+.tile-conn {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 11px; padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+  background: rgba(0,0,0,.7); color: #fff;
+}
+.tile-conn.bad { background: var(--danger); }
+
+/* Native select arrows render dark-on-dark on phones; draw our own. */
+.chat-select, select.pact-select {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23e7edf7' stroke-width='2' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center;
+  padding-right: 28px;
+}
+
+/* Whiteboard text size box */
+.textsize { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.textsize input {
+  width: 52px; min-height: 34px; text-align: center; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 2px 4px;
 }

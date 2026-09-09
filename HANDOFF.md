@@ -437,6 +437,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 - **Images** are stored as data URLs in DO storage (SQLite value limit ~2 MiB) and broadcast over WS — keep them downscaled; the persist is wrapped in try/catch so a too-large image still shows live but may not persist for late joiners.
 - **Whiteboard move/resize** sync the **final** state on pointer-up (no live intermediate frames).
 - **Draw/share permission** is a global host toggle — there is no per-user request/approve flow yet.
+- **No TURN relay is configured by default,** and the built-in fallback (a free public Open Relay) is no longer dependable. Anyone behind a strict NAT — most mobile networks — will appear in the participant list with no video, or take minutes to connect. Set `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`; Cloudflare Realtime TURN has a free tier. The UI now shows per-participant connection state and warns once when a connection fails with no relay configured.
 - **Recording permission is advisory.** The host's approval gates the app's own recorder; nothing can stop someone screen-recording their device. Same as Zoom.
 - **Recording on a phone cannot use a save dialog** — no mobile browser has one. Android lands in Downloads; iOS ignores the download attribute on a blob URL and opens the file instead, so the user is told to save it from the share sheet. Setting `RECORDING_UPLOAD_URL` is the reliable path on mobile.
 - **iOS records MP4, everyone else WebM.** Safari has never supported WebM recording. The extension follows the real container, and the WebM duration patch is skipped for MP4 — which means **MP4 recordings are not seekable** until something remuxes them.
@@ -455,7 +456,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Five committed suites, 126 checks in total, run with `npm test` against a
+Six committed suites, 137 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
@@ -464,6 +465,7 @@ Five committed suites, 126 checks in total, run with `npm test` against a
 | `tests/e2e-controls.mjs` | `npm run test:controls` | active speaker, whiteboard requests, per-recording approval (16) |
 | `tests/e2e-meeting.mjs` | `npm run test:meeting` | co-hosts, devices, pre-join, breakouts, mute-on-entry, rename, timer, chat files (28) |
 | `tests/e2e-mobile.mjs` | `npm run test:mobile` | every screen and panel at 390px and 320px: overflow, tap targets, covered controls, skippable pre-join (20) |
+| `tests/e2e-fixes.mjs` | `npm run test:fixes` | regressions from a real call: text size and resize, guest names, participant names, chat vs gallery, landscape phones (11) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset

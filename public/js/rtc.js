@@ -3,11 +3,12 @@
 // Signaling messages are relayed through the Durable Object (see signaling.js).
 
 export class Mesh {
-  constructor({ iceServers, send, onStream, onLeave }) {
+  constructor({ iceServers, send, onStream, onLeave, onState }) {
     this.iceServers = iceServers;
     this.send = send; // (toPeerId, data) => void
     this.onStream = onStream; // (peerId, name, stream) => void
     this.onLeave = onLeave; // (peerId) => void
+    this.onState = onState || (() => {}); // (peerId, connectionState) => void
     this.selfId = null;
     this.localStream = null;
     this.peers = new Map(); // peerId -> { pc, name, makingOffer, polite }
@@ -21,6 +22,7 @@ export class Mesh {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers });
     const entry = { pc, name, makingOffer: false, polite: this.selfId < peerId };
     this.peers.set(peerId, entry);
+    this.onState(peerId, pc.connectionState);
 
     // Publish our local tracks. If we have none (view-only participant), add
     // receive-only transceivers so negotiation still happens and we get media.
@@ -57,12 +59,23 @@ export class Mesh {
 
     pc.onconnectionstatechange = () => {
       const st = pc.connectionState;
+      this.onState(peerId, st);
       if (st === "closed") return this.removePeer(peerId);
       // A failed connection used to be dropped and never retried, leaving the
       // person in the roster with dead media until one side reloaded. Try to
       // rebuild it a few times before giving up on them.
       if (st === "failed") this.recover(peerId);
       if (st === "connected") entry.retries = 0;
+      // A dropped connection often comes back on its own; give it a moment,
+      // then nudge ICE before tearing anything down.
+      if (st === "disconnected") {
+        clearTimeout(entry.iceTimer);
+        entry.iceTimer = setTimeout(() => {
+          if (pc.connectionState === "disconnected") {
+            try { pc.restartIce(); } catch {}
+          }
+        }, 3000);
+      }
     };
 
     return entry;
@@ -161,6 +174,7 @@ export class Mesh {
   removePeer(peerId) {
     const entry = this.peers.get(peerId);
     if (!entry) return;
+    clearTimeout(entry.iceTimer);
     try { entry.pc.close(); } catch {}
     this.peers.delete(peerId);
     this.onLeave(peerId);
