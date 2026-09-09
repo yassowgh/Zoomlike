@@ -14,8 +14,18 @@ const el = {
   randomRoomBtn: $("randomRoomBtn"), joinBtn: $("joinBtn"),
   optCam: $("optCam"), optMic: $("optMic"), lobbyHint: $("lobbyHint"),
   roomTitle: $("roomTitle"), copyLinkBtn: $("copyLinkBtn"),
-  connState: $("connState"), galleryBtn: $("galleryBtn"),
+  connState: $("connState"),
   bgBtn: $("bgBtn"), bgMenu: $("bgMenu"),
+  viewBtn: $("viewBtn"), viewMenu: $("viewMenu"), moreBtn: $("moreBtn"), moreMenu: $("moreMenu"),
+  boardToggleBtn: $("boardToggleBtn"), boardOnToggle: $("boardOnToggle"),
+  controls: $("controls"), moreCtrlBtn: $("moreCtrlBtn"), toolsBtn: $("toolsBtn"),
+  spotStage: $("spotStage"), spotVideo: $("spotVideo"), spotWho: $("spotWho"),
+  spotTag: $("spotTag"), spotEmpty: $("spotEmpty"),
+  requestWrap: $("requestWrap"), requestList: $("requestList"),
+  endedModal: $("endedModal"), endedOk: $("endedOk"),
+  quickJoin: $("quickJoin"), qjForm: $("qjForm"), qjName: $("qjName"), qjRoom: $("qjRoom"),
+  qjHint: $("qjHint"), qjSignIn: $("qjSignIn"), qjSubmit: $("qjSubmit"),
+  schedAccess: $("schedAccess"),
   confirmLeave: $("confirmLeave"), confirmCancel: $("confirmCancel"), confirmLeaveBtn: $("confirmLeaveBtn"),
   guestBox: $("guestBox"), guestRoom: $("guestRoom"), guestName: $("guestName"), guestJoin: $("guestJoin"),
   board: $("board"), overlay: $("overlay"), boardWrap: $("boardWrap"),
@@ -54,7 +64,6 @@ const el = {
   // whiteboard v2 + permissions + export + screen stage
   imageBtn: $("imageBtn"), imageInput: $("imageInput"), zoomIn: $("zoomIn"), zoomOut: $("zoomOut"), zoomFit: $("zoomFit"),
   selBar: $("selBar"), selLock: $("selLock"), selDelete: $("selDelete"), noDrawHint: $("noDrawHint"),
-  exportBtn: $("exportBtn"), exportMenu: $("exportMenu"),
   screenStage: $("screenStage"), screenVideo: $("screenVideo"), screenWho: $("screenWho"), screenHide: $("screenHide"), screenPeek: $("screenPeek"),
   allowDrawToggle: $("allowDrawToggle"), allowShareToggle: $("allowShareToggle"), endMeetingBtn: $("endMeetingBtn"),
 };
@@ -68,11 +77,34 @@ const state = {
   selfId: "", host: "", peers: new Map(), hand: false, recTarget: "computer",
   waiting: true, waitingList: new Map(), breakouts: [], vbg: null, vbgMode: "none",
   skip: false, mainRoom: "",
-  canDraw: true, canShare: true, allowDraw: false, allowShare: false,
+  canDraw: true, canShare: true, canRecord: true, allowDraw: false, allowShare: false,
+  // Permission granted to *me* personally by the host, as opposed to the
+  // meeting-wide allowDraw/allowShare toggles.
+  grantShare: false, grantRecord: false,
   screenIds: new Map(), // peerId -> announced screen stream id
   seenStreams: new Map(), // peerId -> [streams]
+  // Shared meeting surface (host-controlled, mirrored to everyone).
+  boardOn: true, boardBg: "dark", spotlight: null,
+  // Per-viewer view preference.
+  layout: "board", strip: "right",
+  // Screen share currently on the main stage, and whether this viewer hid it.
+  screenActive: null, screenDismissed: false,
+  // Host-side queue of pending "may I share / record?" asks.
+  requests: new Map(),
+  access: "approval",
 };
 const isHost = () => state.selfId && state.selfId === state.host;
+
+// Effective permissions = host status, the meeting-wide toggles, or a personal
+// grant from the host. Recomputed whenever any of those three change.
+function recomputePerms() {
+  state.canDraw = isHost() || state.allowDraw;
+  state.canShare = isHost() || state.allowShare || state.grantShare;
+  state.canRecord = isHost() || state.grantRecord;
+}
+
+// Debug/testing hook: lets end-to-end tests inspect live app state.
+window.__zl_state = state;
 
 // ---------------------------------------------------------------- lobby
 function randomRoom() {
@@ -90,6 +122,7 @@ function roomFromUrl() {
 // ------------------------------------------------------------------ auth
 async function initAuth() {
   wireAuthForm();
+  wireQuickJoin();
   // sessionStorage carries a guest/reload token across navigations (breakouts);
   // localStorage carries a registered user's persistent login.
   const token = sessionStorage.getItem("zl_token") || localStorage.getItem("zl_token") || "";
@@ -100,13 +133,58 @@ async function initAuth() {
     } catch {}
     sessionStorage.removeItem("zl_token"); localStorage.removeItem("zl_token");
   }
+  // Someone following an invite link is here to attend a meeting, not to open
+  // an account: send them straight in.
+  const invited = roomFromUrl();
+  if (invited) return showQuickJoin(invited);
   showAuth();
 }
 
 function showAuth() {
+  el.quickJoin.hidden = true;
   el.auth.hidden = false; el.lobby.hidden = true; el.room.hidden = true;
   showGuestOption();
   el.authEmail.focus();
+}
+
+// ---- Quick join: name only, or nothing at all if we already know it -------
+function showQuickJoin(room) {
+  el.quickJoin.hidden = false; el.auth.hidden = true; el.lobby.hidden = true; el.room.hidden = true;
+  el.qjRoom.textContent = room;
+  const remembered = (localStorage.getItem("zl_name") || "").trim();
+  if (remembered) return quickJoinAs(remembered);
+  el.qjName.focus();
+}
+
+function wireQuickJoin() {
+  el.qjForm.onsubmit = (e) => {
+    e.preventDefault();
+    const name = el.qjName.value.trim().slice(0, 40);
+    if (!name) { el.qjName.focus(); return; }
+    quickJoinAs(name);
+  };
+  // Escape hatch for people who do want their account (scheduling, hosting).
+  el.qjSignIn.onclick = () => showAuth();
+}
+
+async function quickJoinAs(name) {
+  el.qjSubmit.disabled = true;
+  el.qjHint.textContent = "Joining…";
+  try {
+    const r = await fetch("/api/auth/guest", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (!r.ok) { el.qjHint.textContent = data.error || "Could not join."; return; }
+    localStorage.setItem("zl_name", name);
+    enterLobby(data); // initLobby sees the room in the URL and joins immediately
+  } catch {
+    el.qjHint.textContent = "Network error. Please try again.";
+  } finally {
+    el.qjSubmit.disabled = false;
+  }
 }
 
 let authMode = "login";
@@ -194,9 +272,13 @@ function enterLobby(account) {
   sessionStorage.setItem("zl_token", account.token);
   el.whoami.textContent = account.name;
   el.nameInput.value = account.name;
+  el.quickJoin.hidden = true;
   el.auth.hidden = true; el.lobby.hidden = false; el.room.hidden = true;
   // Scheduling is for registered users only.
   el.schedSection.hidden = state.isGuest;
+  // Guests can't own a room, so the access chooser is not theirs to set.
+  const accessField = document.querySelector(".access-field");
+  if (accessField) accessField.hidden = state.isGuest;
   if (!state.isGuest) { wireSchedule(); loadSchedule(); }
   initLobby();
 }
@@ -207,9 +289,85 @@ function logout() {
   location.href = "/";
 }
 
+// The board background belongs to the meeting: the host picks it and
+// everyone's board changes with it.
 function applyBackground(name) {
+  state.boardBg = name;
   el.boardWrap.dataset.bg = name;
-  localStorage.setItem("zl_bg", name);
+}
+
+// ------------------------------------------------------------ view layout
+// Three main surfaces can occupy the stage — the whiteboard, a shared screen,
+// and a single large speaker/spotlight video. This decides which one is up,
+// and where the participant strip sits.
+function applyLayout() {
+  // The viewer's stored preference, overridden while the host is directing
+  // attention or the whiteboard is unavailable. state.layout itself is never
+  // rewritten, so the preference comes back when the override lifts.
+  let layout = state.layout;
+  if (state.spotlight) layout = "speaker";
+  else if (layout === "board" && !state.boardOn) layout = "speaker";
+  el.room.dataset.layout = layout;
+  el.room.dataset.strip = state.strip;
+
+  const sharing = !!state.screenActive;
+  const showScreen = sharing && !state.screenDismissed;
+  el.screenStage.hidden = !showScreen;
+  el.boardWrap.hidden = showScreen || layout !== "board";
+  el.spotStage.hidden = showScreen || layout !== "speaker";
+  if (el.screenPeek) el.screenPeek.hidden = !(sharing && state.screenDismissed);
+
+  if (!el.spotStage.hidden) renderSpotlight();
+  if (!el.boardWrap.hidden) state.board?.resize();
+
+  // Mark the active choices in the View menu.
+  el.viewMenu.querySelectorAll("[data-view]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === layout);
+    if (b.dataset.view === "board") b.disabled = !state.boardOn;
+  });
+  el.viewMenu.querySelectorAll("[data-strip]").forEach((b) => b.classList.toggle("active", b.dataset.strip === state.strip));
+
+  localStorage.setItem("zl_layout", state.layout);
+  localStorage.setItem("zl_strip", state.strip);
+}
+
+// Who gets the big tile in speaker view: the host's spotlight if there is one,
+// otherwise a peer, otherwise you.
+function pickSpeaker() {
+  if (state.spotlight) return state.spotlight;
+  const first = state.peers.keys().next();
+  return first.done ? state.selfId : first.value;
+}
+
+function renderSpotlight() {
+  const id = pickSpeaker();
+  const tile = state.tiles.get(id === state.selfId ? "self" : id);
+  const stream = tile?.stream || null;
+  el.spotEmpty.hidden = !!stream;
+  el.spotVideo.hidden = !stream;
+  if (stream && el.spotVideo.srcObject !== stream) {
+    el.spotVideo.srcObject = stream;
+    el.spotVideo.play?.().catch(() => {});
+  }
+  // The strip tiles already play everyone's audio — never play it twice.
+  el.spotVideo.muted = true;
+  el.spotWho.textContent = id === state.selfId ? "You" : (state.peerNames.get(id) || "Someone");
+  el.spotTag.hidden = !state.spotlight;
+  for (const [tid, t] of state.tiles) {
+    const realId = tid === "self" ? state.selfId : tid;
+    t.div.classList.toggle("spotlighted", !!state.spotlight && realId === state.spotlight);
+  }
+}
+
+// Applies the host-controlled whiteboard on/off switch. This deliberately does
+// NOT touch state.layout: that is the viewer's own preference, and applyLayout
+// substitutes speaker view while the board is off, so turning the board back
+// on returns them to the whiteboard.
+function applyBoardState() {
+  el.boardToggleBtn.textContent = state.boardOn ? "🖊️ Turn whiteboard off" : "🖊️ Turn whiteboard on";
+  el.boardToggleBtn.hidden = !isHost();
+  if (el.boardOnToggle) el.boardOnToggle.checked = state.boardOn;
+  applyLayout();
 }
 
 // ------------------------------------------------------------- breakouts
@@ -286,11 +444,18 @@ function routeStream(peerId, name, stream) {
 }
 
 function applyPermUI() {
-  el.noDrawHint.hidden = state.canDraw;
-  el.shareBtn.disabled = !state.canShare;
-  el.shareBtn.style.opacity = state.canShare ? "" : "0.5";
+  el.noDrawHint.hidden = state.canDraw || !state.boardOn;
+  // Share and record stay enabled without permission — pressing them asks the
+  // host rather than doing nothing.
+  el.shareBtn.title = state.canShare ? "Share your screen" : "Ask the host to let you share";
+  el.recBtn.title = state.canRecord ? "Record the session" : "Ask the host to let you record";
+  el.shareBtn.classList.toggle("needs-ask", !state.canShare);
+  el.recBtn.classList.toggle("needs-ask", !state.canRecord);
   if (el.allowDrawToggle) el.allowDrawToggle.checked = state.allowDraw;
   if (el.allowShareToggle) el.allowShareToggle.checked = state.allowShare;
+  // Only the host changes the shared board background.
+  el.bgBtn.hidden = !isHost();
+  if (!isHost()) el.bgMenu.hidden = true;
 }
 
 // --------------------------------------------------------------- schedule
@@ -302,12 +467,13 @@ function wireSchedule() {
     e.preventDefault();
     const title = el.schedTitle.value.trim() || "Meeting";
     const when = el.schedWhen.value;
+    const access = el.schedAccess.value === "open" ? "open" : "approval";
     const room = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}-${Math.random().toString(36).slice(2, 6)}`;
     try {
       const r = await fetch("/api/meetings", {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: "Bearer " + state.token },
-        body: JSON.stringify({ title, when, room }),
+        body: JSON.stringify({ title, when, room, access }),
       });
       if (r.ok) { el.schedForm.hidden = true; el.schedTitle.value = ""; el.schedWhen.value = ""; loadSchedule(); toast("Meeting scheduled"); }
       else toast("Could not schedule");
@@ -329,7 +495,8 @@ function renderSchedule(meetings) {
   if (!meetings.length) { el.schedList.innerHTML = '<div class="sched-empty">No meetings scheduled yet.</div>'; return; }
   for (const m of meetings) {
     const item = document.createElement("div"); item.className = "sched-item";
-    const when = m.when ? new Date(m.when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Any time";
+    const when = (m.when ? new Date(m.when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Any time")
+      + (m.access === "open" ? " · open to anyone" : " · you approve");
     item.innerHTML = `<div class="si-main"><div class="si-title"></div><div class="si-when"></div></div><div class="si-act"></div>`;
     item.querySelector(".si-title").textContent = m.title;
     item.querySelector(".si-when").textContent = when;
@@ -367,6 +534,10 @@ async function join() {
   if (!roomId) { el.lobbyHint.textContent = "Please enter a room name."; return; }
 
   state.name = name; state.roomId = roomId;
+  // Only meaningful when this join is what creates the room; the server
+  // ignores it for a room that already exists.
+  const accessPick = document.querySelector('input[name="access"]:checked');
+  state.access = accessPick && accessPick.value === "open" ? "open" : "approval";
   state.micOn = el.optMic.checked; state.camOn = el.optCam.checked;
   const params = new URLSearchParams(location.search);
   state.skip = params.get("skip") === "1";
@@ -465,8 +636,11 @@ function setupBoard() {
     if (item) { const f = item.getAsFile(); if (f) readImage(f, (src) => wb.insertImage(src)); }
   });
 
-  el.exportBtn.onclick = (e) => { e.stopPropagation(); el.exportMenu.hidden = !el.exportMenu.hidden; };
-  el.exportMenu.querySelectorAll("button").forEach((b) => (b.onclick = () => { el.exportMenu.hidden = true; exportBoard(b.dataset.exp); }));
+  // Drawing tools stay hidden behind a button on phones.
+  el.toolsBtn.onclick = () => {
+    const open = el.boardWrap.classList.toggle("tools-open");
+    el.toolsBtn.classList.toggle("on", open);
+  };
 
   document.addEventListener("keydown", (e) => {
     if (el.room.hidden) return;
@@ -540,10 +714,22 @@ function setupControls() {
   el.recBtn.onclick = (e) => {
     e.stopPropagation();
     if (state.recorder.recording) return stopRecording();
+    // Anyone who is not the host needs the host's go-ahead before recording.
+    if (!state.canRecord) {
+      state.sig?.send({ type: "record-request" });
+      toast("Asked the host for permission to record");
+      return;
+    }
     el.recMenu.hidden = !el.recMenu.hidden;
   };
   el.recMenu.querySelectorAll("button").forEach((b) => {
     b.onclick = () => { el.recMenu.hidden = true; startRecording(b.dataset.target); };
+  });
+
+  // Phones show essentials only; "More" reveals the rest.
+  el.moreCtrlBtn.onclick = (e) => { e.stopPropagation(); el.controls.classList.toggle("expanded"); };
+  el.controls.querySelectorAll('.ctrl-item[data-pri="2"] .ctrl').forEach((b) => {
+    b.addEventListener("click", () => el.controls.classList.remove("expanded"));
   });
 
   // Participants panel.
@@ -568,14 +754,23 @@ function setupControls() {
   };
   el.allowDrawToggle.onchange = () => { if (isHost()) state.sig?.send({ type: "allow-draw", on: el.allowDrawToggle.checked }); };
   el.allowShareToggle.onchange = () => { if (isHost()) state.sig?.send({ type: "allow-share", on: el.allowShareToggle.checked }); };
+  el.boardOnToggle.onchange = () => {
+    if (!isHost()) return;
+    state.sig?.send({ type: "board-toggle", on: el.boardOnToggle.checked });
+  };
+  el.boardToggleBtn.onclick = () => {
+    if (!isHost()) return;
+    el.moreMenu.hidden = true;
+    state.sig?.send({ type: "board-toggle", on: !state.boardOn });
+  };
   el.endMeetingBtn.onclick = () => {
     if (!isHost()) return;
     if (confirm("End the meeting for everyone?")) { state.sig?.send({ type: "end-session" }); leave(); }
   };
 
-  // Screen stage <-> whiteboard toggle.
-  el.screenHide.onclick = () => { el.screenStage.hidden = true; el.boardWrap.hidden = false; if (el.screenPeek) el.screenPeek.hidden = false; state.board?.resize(); };
-  if (el.screenPeek) el.screenPeek.onclick = () => { el.screenStage.hidden = false; el.boardWrap.hidden = true; el.screenPeek.hidden = true; };
+  // Step away from a shared screen and back to it.
+  el.screenHide.onclick = () => { state.screenDismissed = true; applyLayout(); };
+  if (el.screenPeek) el.screenPeek.onclick = () => { state.screenDismissed = false; applyLayout(); };
 
   // Waiting room (participant) cancel.
   el.waitLeave.onclick = () => leave();
@@ -609,21 +804,54 @@ function setupControls() {
   el.confirmCancel.onclick = () => { el.confirmLeave.hidden = true; };
   el.confirmLeaveBtn.onclick = () => leave();
 
-  // Gallery <-> whiteboard view.
-  el.galleryBtn.onclick = () => {
-    const gallery = el.room.classList.toggle("gallery");
-    el.galleryBtn.textContent = gallery ? "🖊️ Whiteboard" : "🔳 Gallery";
-  };
+  // View menu: how participants are laid out, and where they sit.
+  el.viewBtn.onclick = (e) => { e.stopPropagation(); el.viewMenu.hidden = !el.viewMenu.hidden; el.moreMenu.hidden = true; };
+  el.viewMenu.querySelectorAll("[data-view]").forEach((b) => {
+    b.onclick = () => { state.layout = b.dataset.view; el.viewMenu.hidden = true; applyLayout(); };
+  });
+  el.viewMenu.querySelectorAll("[data-strip]").forEach((b) => {
+    b.onclick = () => { state.strip = b.dataset.strip; el.viewMenu.hidden = true; applyLayout(); };
+  });
 
-  // Board background picker.
-  applyBackground(localStorage.getItem("zl_bg") || "dark");
-  el.bgBtn.onclick = (e) => { e.stopPropagation(); el.bgMenu.hidden = !el.bgMenu.hidden; };
+  // More menu: board background + board export.
+  el.moreBtn.onclick = (e) => { e.stopPropagation(); el.moreMenu.hidden = !el.moreMenu.hidden; el.viewMenu.hidden = true; };
+  el.moreMenu.querySelectorAll("[data-exp]").forEach((b) => {
+    b.onclick = () => { el.moreMenu.hidden = true; exportBoard(b.dataset.exp); };
+  });
+
+  // Board background picker — host only, and shared with the whole meeting.
+  applyBackground(state.boardBg);
+  el.bgBtn.onclick = (e) => {
+    e.stopPropagation();
+    el.moreMenu.hidden = true;
+    el.bgMenu.hidden = !el.bgMenu.hidden;
+  };
   el.bgMenu.querySelectorAll(".bg-swatch").forEach((b) => {
-    b.onclick = () => { applyBackground(b.dataset.bg); el.bgMenu.hidden = true; };
+    b.onclick = () => {
+      el.bgMenu.hidden = true;
+      if (!isHost()) return;
+      applyBackground(b.dataset.bg);
+      state.sig?.send({ type: "board-bg", bg: b.dataset.bg });
+    };
   });
   document.addEventListener("click", (e) => {
     if (!el.bgMenu.hidden && !el.bgMenu.contains(e.target) && e.target !== el.bgBtn) el.bgMenu.hidden = true;
+    if (!el.viewMenu.hidden && !el.viewMenu.contains(e.target) && e.target !== el.viewBtn) el.viewMenu.hidden = true;
+    if (!el.moreMenu.hidden && !el.moreMenu.contains(e.target) && e.target !== el.moreBtn) el.moreMenu.hidden = true;
+    if (el.controls.classList.contains("expanded") && !el.controls.contains(e.target)) el.controls.classList.remove("expanded");
   });
+
+  el.endedOk.onclick = () => { location.href = "/"; };
+
+  // Side panels are positioned below the topbar, whose height changes when its
+  // buttons wrap, so publish the measured height as a CSS variable.
+  syncTopbarHeight();
+  window.addEventListener("resize", syncTopbarHeight);
+
+  // Restore this viewer's layout preference.
+  state.layout = localStorage.getItem("zl_layout") || "board";
+  state.strip = localStorage.getItem("zl_strip") || "right";
+  applyLayout();
 
   // Keyboard: Ctrl/Cmd+Z = undo my last stroke.
   document.addEventListener("keydown", (e) => {
@@ -688,7 +916,11 @@ function broadcastMedia() {
 }
 
 async function toggleShare() {
-  if (!state.canShare) return toast("The host controls who can share the screen");
+  if (!state.canShare) {
+    state.sig?.send({ type: "share-request" });
+    toast("Asked the host for permission to share your screen");
+    return;
+  }
   if (state.sharing) return stopShare();
   try {
     const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -715,19 +947,18 @@ function stopShare() {
 }
 
 function showScreen(name, stream) {
+  state.screenActive = { name, stream };
+  state.screenDismissed = false;
   el.screenVideo.srcObject = stream;
   el.screenWho.textContent = name || "Someone";
-  el.screenStage.hidden = false;
-  el.boardWrap.hidden = true;
-  el.screenPeek && (el.screenPeek.hidden = true);
+  applyLayout();
   el.screenVideo.play?.().catch(() => {});
 }
 function hideScreen() {
-  el.screenStage.hidden = true;
-  el.boardWrap.hidden = false;
+  state.screenActive = null;
+  state.screenDismissed = false;
   el.screenVideo.srcObject = null;
-  el.screenPeek && (el.screenPeek.hidden = true);
-  state.board?.resize();
+  applyLayout();
 }
 
 function startRecording(target) {
@@ -769,7 +1000,7 @@ function leave() {
 
 // ------------------------------------------------------------ signaling
 function connect() {
-  const sig = new Signaling(state.roomId, state.name, state.token, state.skip);
+  const sig = new Signaling(state.roomId, state.name, state.token, state.skip, { access: state.access });
   state.sig = sig;
 
   const mesh = new Mesh({
@@ -793,10 +1024,14 @@ function connect() {
   });
 
   sig.addEventListener("welcome", (e) => {
-    const { self, host, peers, board, waiting, canDraw, canShare, allowDraw, allowShare } = e.detail;
+    const { self, host, peers, board, waiting,
+            allowDraw, allowShare, boardOn, boardBg, spotlight } = e.detail;
     state.selfId = self; state.host = host; state.waiting = waiting !== false;
-    state.canDraw = canDraw !== false; state.canShare = canShare !== false;
     state.allowDraw = !!allowDraw; state.allowShare = !!allowShare;
+    state.grantShare = !!e.detail.grantShare; state.grantRecord = !!e.detail.grantRecord;
+    state.boardOn = boardOn !== false;
+    state.spotlight = spotlight || null;
+    applyBackground(boardBg || "dark");
     el.waitingScreen.hidden = true; // admitted
     mesh.setSelf(self);
     state.board.loadShapes(board);
@@ -808,20 +1043,60 @@ function connect() {
     }
     el.waitingToggle.checked = state.waiting;
     updateHostUI(); renderPeople(); refreshChatTo(); applyPermUI();
+    applyBoardState();
     broadcastMedia();
+  });
+
+  // ---- shared surface state pushed by the host ----
+  sig.addEventListener("board-state", (e) => {
+    state.boardOn = !!e.detail.on;
+    applyBoardState();
+    toast(state.boardOn ? "The host turned the whiteboard on" : "The host turned the whiteboard off");
+  });
+  sig.addEventListener("board-bg", (e) => { applyBackground(e.detail.bg); });
+  sig.addEventListener("spotlight", (e) => {
+    state.spotlight = e.detail.id || null;
+    applyLayout(); renderPeople();
+    if (state.spotlight) {
+      const who = state.spotlight === state.selfId ? "You are" : `${state.peerNames.get(state.spotlight) || "Someone"} is`;
+      toast(`📌 ${who} spotlighted`);
+    } else toast("Spotlight removed");
+  });
+
+  // ---- permission requests ----
+  sig.addEventListener("share-request", (e) => addRequest("share", e.detail.id, e.detail.name));
+  sig.addEventListener("record-request", (e) => addRequest("record", e.detail.id, e.detail.name));
+  sig.addEventListener("share-decision", (e) => {
+    state.grantShare = !!e.detail.ok;
+    recomputePerms();
+    applyPermUI();
+    toast(e.detail.ok ? "The host allowed screen sharing — press Share" : "The host declined your screen share request");
+  });
+  sig.addEventListener("record-decision", (e) => {
+    state.grantRecord = !!e.detail.ok;
+    recomputePerms();
+    applyPermUI();
+    toast(e.detail.ok ? "The host allowed recording — press Record" : "The host declined your recording request");
   });
 
   sig.addEventListener("perm", (e) => {
     if (e.detail.what === "draw") state.allowDraw = e.detail.on;
     if (e.detail.what === "share") state.allowShare = e.detail.on;
-    state.canDraw = isHost() || state.allowDraw;
-    state.canShare = isHost() || state.allowShare;
+    recomputePerms();
     state.board.setCanDraw(state.canDraw);
     applyPermUI();
     toast(e.detail.what === "draw" ? (e.detail.on ? "Everyone can draw now" : "Drawing restricted to host") : (e.detail.on ? "Everyone can share now" : "Sharing restricted to host"));
   });
 
-  sig.addEventListener("session-end", () => { alert("The host has ended the meeting."); leave(); });
+  sig.addEventListener("session-end", () => {
+    // Tear down locally and stop reconnecting — the room has been reset
+    // server-side, so there is nothing left to rejoin.
+    try { state.recorder?.recording && state.recorder.stop(state.roomId); } catch {}
+    state.sig?.close();
+    state.mesh?.closeAll();
+    state.localStream?.getTracks().forEach((t) => t.stop());
+    el.endedModal.hidden = false;
+  });
 
   // Screen share routing (screen shows on the main stage; cameras keep running).
   sig.addEventListener("screen", (e) => {
@@ -867,7 +1142,7 @@ function connect() {
     state.peers.set(id, { name, mic: true, cam: true, hand: false });
     mesh.addPeer(id, name);
     if (state.waitingList.delete(id)) renderWaiting();
-    renderPeople(); refreshChatTo();
+    renderPeople(); refreshChatTo(); applyLayout();
     toast(`${name} joined`);
   });
 
@@ -875,7 +1150,8 @@ function connect() {
     const p = state.peers.get(e.detail.id);
     mesh.removePeer(e.detail.id);
     state.peers.delete(e.detail.id);
-    renderPeople(); refreshChatTo();
+    for (const kind of ["share", "record"]) state.requests.delete(`${kind}:${e.detail.id}`);
+    renderPeople(); refreshChatTo(); renderRequests(); applyLayout();
     if (p) toast(`${p.name} left`);
   });
 
@@ -945,6 +1221,8 @@ function addTile(id, name, stream, isSelf = false) {
   const info = isSelf ? { mic: state.micOn, hand: state.hand } : state.peers.get(id);
   if (info) { tile.div.classList.toggle("muted", !info.mic); if (info.hand) setTileHand(id, true); }
   refreshTileHostBadges();
+  // A newly arrived stream may be the one the speaker stage is waiting for.
+  if (!el.spotStage.hidden) renderSpotlight();
   return tile;
 }
 
@@ -994,6 +1272,7 @@ function renderPeople() {
 function personRow(id, name, s, self) {
   const row = document.createElement("div");
   row.className = "prow";
+  row.dataset.pid = id;
   const nm = document.createElement("span");
   nm.className = "pname";
   nm.textContent = name + (self ? " (you)" : "");
@@ -1008,13 +1287,18 @@ function personRow(id, name, s, self) {
     dm.onclick = () => { el.chatTo.value = id; el.chat.hidden = false; el.people.hidden = true; el.chatInput.focus(); };
     row.appendChild(dm);
     if (isHost()) {
+      const spot = document.createElement("button");
+      const on = state.spotlight === id;
+      spot.className = "pact"; spot.textContent = on ? "📌 Unspotlight" : "📌 Spotlight";
+      spot.onclick = () => state.sig?.send({ type: "spotlight", target: on ? null : id });
+      row.appendChild(spot);
       const mute = document.createElement("button");
       mute.className = "pact"; mute.textContent = "Mute";
-      mute.onclick = () => state.sig?.send({ type: "host-mute", target: id });
+      mute.onclick = () => { state.sig?.send({ type: "host-mute", target: id }); toast(`Muted ${name}`); };
       row.appendChild(mute);
       const rm = document.createElement("button");
       rm.className = "pact"; rm.textContent = "Remove";
-      rm.onclick = () => { if (confirm(`Remove ${name}?`)) state.sig?.send({ type: "host-remove", target: id }); };
+      rm.onclick = () => { if (confirm(`Remove ${name} from the meeting?`)) state.sig?.send({ type: "host-remove", target: id }); };
       row.appendChild(rm);
     }
   }
@@ -1024,13 +1308,51 @@ function personRow(id, name, s, self) {
 function updateHostUI() {
   el.hostTools.hidden = !isHost();
   el.waitingToggle.checked = state.waiting;
-  // Host can always draw/share; recompute in case host role changed.
-  state.canDraw = isHost() || state.allowDraw;
-  state.canShare = isHost() || state.allowShare;
+  // The host role may have just changed hands, so re-derive permissions.
+  recomputePerms();
   state.board?.setCanDraw(state.canDraw);
   applyPermUI();
   renderWaiting();
+  renderRequests();
   refreshTileHostBadges();
+  el.boardToggleBtn.hidden = !isHost();
+}
+
+// Pending "may I share / record?" asks, shown to the host in the people panel.
+function renderRequests() {
+  const host = isHost();
+  el.requestWrap.hidden = !host || state.requests.size === 0;
+  if (!host) return;
+  el.requestList.innerHTML = "";
+  for (const [key, req] of state.requests) {
+    const row = document.createElement("div");
+    row.className = "prow req-row";
+    const txt = document.createElement("span");
+    txt.className = "rtext";
+    txt.textContent = `${req.name} wants to ${req.kind === "share" ? "share their screen" : "record"}`;
+    const ok = document.createElement("button");
+    ok.className = "pact approve"; ok.textContent = "Allow";
+    ok.onclick = () => decideRequest(key, req, true);
+    const no = document.createElement("button");
+    no.className = "pact"; no.textContent = "Deny";
+    no.onclick = () => decideRequest(key, req, false);
+    row.append(txt, ok, no);
+    el.requestList.appendChild(row);
+  }
+}
+
+function decideRequest(key, req, ok) {
+  state.sig?.send({ type: req.kind === "share" ? "share-decision" : "record-decision", target: req.id, ok });
+  state.requests.delete(key);
+  renderRequests();
+  toast(ok ? `Allowed ${req.name}` : `Denied ${req.name}`);
+}
+
+function addRequest(kind, id, name) {
+  state.requests.set(`${kind}:${id}`, { kind, id, name });
+  renderRequests();
+  if (el.people.hidden) { el.people.hidden = false; renderPeople(); }
+  toast(`✋ ${name} is asking to ${kind === "share" ? "share their screen" : "record"}`);
 }
 
 function renderWaiting() {
@@ -1083,6 +1405,11 @@ function showReaction(name, emoji) {
 }
 
 // -------------------------------------------------------------- helpers
+function syncTopbarHeight() {
+  const tb = document.querySelector(".topbar");
+  if (tb && tb.offsetHeight) document.documentElement.style.setProperty("--topbar-h", tb.offsetHeight + "px");
+}
+
 let toastT;
 function toast(msg) {
   el.toast.textContent = msg; el.toast.hidden = false;

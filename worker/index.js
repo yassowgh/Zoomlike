@@ -50,19 +50,24 @@ export default {
       if (request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const room = (body.room || "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64) || ("mtg-" + crypto.randomUUID().slice(0, 8));
+        // "open" lets anyone with the link walk straight in; "approval" holds
+        // them in the waiting room until the host admits them.
+        const access = body.access === "open" ? "open" : "approval";
         const meeting = {
           id: crypto.randomUUID().slice(0, 12),
           title: String(body.title || "Meeting").slice(0, 120),
           when: String(body.when || ""),
           room,
+          access,
           ownerEmail: payload.email,
           ownerName: payload.name,
           createdAt: Date.now(),
         };
-        // Make the scheduler the owner/host of that room.
+        // Make the scheduler the owner/host of that room, and apply the
+        // access mode they picked when creating it.
         try {
           const rstub = env.ROOMS.get(env.ROOMS.idFromName(room));
-          await rstub.fetch(new Request("https://do/set-owner", { method: "POST", headers: { "X-Internal": "set-owner" }, body: JSON.stringify({ email: payload.email }) }));
+          await rstub.fetch(new Request("https://do/set-owner", { method: "POST", headers: { "X-Internal": "set-owner" }, body: JSON.stringify({ email: payload.email, access }) }));
         } catch {}
         const res = await authStub(env).fetch(new Request("https://do/sched-add", {
           method: "POST", body: JSON.stringify({ email: payload.email, meeting }),
