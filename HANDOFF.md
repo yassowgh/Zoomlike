@@ -66,6 +66,7 @@ public/
                          WebM duration fix, save to computer (File System Access API) or upload to server.
     virtualbg.js         MediaPipe selfie-segmentation processor → blur / generated scene backgrounds.
     speaking.js          Active-speaker detection: one WebAudio analyser per stream, RMS + debounce.
+    devices.js           Camera/mic/speaker enumeration, persistence, devicechange, pre-join level meter.
 ```
 
 ---
@@ -142,6 +143,11 @@ the meeting; the rest describe the room and survive:
 - `allowDraw` (bool, default false) — everyone-can-draw **(session)**
 - `allowShare` (bool, default false) — everyone-can-share **(session)**
 - `boardOn` (bool, default true) — is the whiteboard enabled at all **(session)**
+- `cohosts` (string[] of emails) — who the host promoted **(session)**
+- `muteOnEntry` (bool) — mute people as they arrive **(session)**
+- `startedAt` (ms) — meeting clock start **(session)**
+- `breakoutEndsAt` (ms) — timed breakout deadline, backed by a DO alarm **(session)**
+- `selfRoom` / `mainRoom` (string) — this room's own name, and the main room when this *is* a breakout
 - `boardBg` (string, default `"dark"`) — shared board background **(session)**
 - `spotlight` (connId or absent) — who the host has spotlighted **(session)**
 - `breakouts` (string[]) — sub-room ids currently open **(session)**
@@ -187,13 +193,20 @@ Client→server (`room.js` `webSocketMessage`). Non-`hello` messages are ignored
 | `record-request` | — | admitted (asks the host to allow recording) |
 | `share-decision` / `record-decision` | `{target, ok}` | host |
 | `board-request` | — | admitted (asks the host to start the whiteboard) |
+| `cohost` | `{target, on}` | **host only** |
+| `rename` | `{name}` | everyone (renames yourself) |
+| `mute-on-entry` | `{on}` | moderator |
+| `breakout-move` | `{target, room, from?}` | moderator (`room:""` returns them to the main room) |
+| `breakout-ask` | `{room}` | admitted (asks to switch rooms) |
+| `breakout-announce` | `{text}` | moderator |
+| `file-start` / `file-chunk` | see §6 | admitted |
 | `board-decision` | `{target, ok}` | host |
 | `recording` | `{on}` | admitted (announces a recording; consumes a non-host's permission on start) |
 | `board-toggle` | `{on}` | host (whiteboard on/off for the meeting) |
 | `board-bg` | `{bg}` | host (shared board background) |
 | `spotlight` | `{target}` (null clears) | host |
 | `end-session` | — | host (also resets the room, see §6) |
-| `breakout-open` | `{rooms:[{room,name,members:[connId]}]}` | host |
+| `breakout-open` | `{rooms:[{room,name,members:[connId]}], minutes}` | moderator |
 | `breakout-close` | — | host |
 
 Server→client:
@@ -224,6 +237,14 @@ Server→client:
 | `share-request` / `record-request` / `board-request` | `{id,name}` (to host) |
 | `share-decision` / `record-decision` / `board-decision` | `{ok, by}` (to the requester) |
 | `recording-state` | `{id,name,on}` (who is recording, to everyone) |
+| `cohost` | `{on, by}` (your own role changed) |
+| `peer-role` | `{id, moderator}` (someone else's role changed) |
+| `renamed` | `{id, name}` |
+| `mute-on-entry` | `{on}` |
+| `breakout-state` | `{rooms:[{room,name}], endsAt}` |
+| `breakout-ask` | `{id,name,room,from}` (to moderators) |
+| `breakout-announce` | `{text, by}` |
+| `file-start` / `file-chunk` / `file-error` | chat attachments |
 | `session-end` | — |
 | `breakout-open` | `{room, roomName}` |
 | `breakout-close` | — |
@@ -233,6 +254,49 @@ Internal DO-to-DO (HTTP with `X-Internal` header): `broadcast` (relay a message 
 ---
 
 ## 6. Key domain logic
+
+### Roles: host and co-hosts
+The **host** is the meeting owner (below). The host may promote anyone to
+**co-host**, and `isModerator = isHost || cohost` gates nearly everything.
+Reserved to the host alone: **ending the meeting** and **managing co-hosts**.
+Co-host is remembered by email (`cohosts` in storage), so it survives a
+reconnect; a guest has no stable identity, so their co-host role lasts only for
+that connection. Sub-rooms are handed the owner and the co-host list when a
+breakout opens, so moderators are moderators in there too.
+
+### Devices
+`devices.js` enumerates hardware (labels only appear after permission is
+granted, so it always runs post-getUserMedia), remembers choices in
+`localStorage`, and listens for `devicechange`. Switching mid-meeting grabs a
+new track and hands it to every peer via `replaceTrack`, so nobody is
+disconnected. Speaker choice needs `setSinkId` and the field hides itself where
+that is missing.
+
+### Pre-join preview
+Everyone passes through a camera/mic check on the way in — except when the
+meeting itself is moving them, which is what `skip=1` marks. Being thrown into
+a breakout room and asked "ready to join?" would be nonsense, and the devices
+were already chosen on the way into the meeting.
+
+### Breakout rooms
+Members are navigated to `/room/<main>-b<n>?main=<main>&skip=1`. What the main
+room's DO does when they open:
+- gives each sub-room the meeting's `owner`, `cohosts`, `mainRoom` and access
+  mode through the internal `set-owner` channel — **without this the first
+  person into a breakout became its host**;
+- with a time limit, stores `breakoutEndsAt` and sets a **Durable Object
+  alarm**, so rooms close on time even if the moderator's browser is gone.
+
+A moderator can move one person (`breakout-move`, which reaches them inside a
+sub-room via the internal `relay-to` channel), join any room, return, and
+announce to every room. A participant's `breakout-ask` travels sub-room →
+main room over the internal `forward-request` channel and lands in the
+moderators' request queue.
+
+### Chat attachments
+Sliced into 64 KB pieces client-side and relayed as `file-chunk` messages,
+because Durable Object WebSocket frames top out near 1 MiB. 10 MB cap. Files
+are **relayed, never stored**, so a late joiner does not receive one.
 
 ### Host = the meeting OWNER (not first to enter)
 - `owner` is the first **non-guest** email to join a room, persisted; or preset by scheduling (`set-owner`).
@@ -349,7 +413,7 @@ World coordinates; each viewer has a personal viewport `{scale, panX, panY}` (pa
 ## 7. Feature inventory (all implemented & deployed)
 
 Auth/registration · **one-tap join from an invite link (no account)** · lobby ·
-**meeting access mode (open / host approves)** · **whiteboard** (pen, line, rect, ellipse, arrow, inline text, eraser, images, select/move/resize/lock/delete, undo, clear, zoom, pan, backgrounds, PNG/PDF export) · live cursors · **WebRTC** camera/mic · **screen share as a main stage (camera continues)** · gallery grid view · chat (public + private) · reactions · raise/lower hand · **participants panel** · **host controls** (mute all, mute one, remove, lower all hands) · **waiting room + admit/deny** · **host = meeting creator** · **draw & share permissions** (host toggles) · **end meeting for all** · **breakout rooms** · **scheduled meetings** · **virtual camera backgrounds** · **session recording** (seekable, save locally or to your server) · **whiteboard on/off for the meeting** · **shared board background set by the host** · **spotlight** · **switchable layouts (whiteboard / speaker / gallery, strip side / bottom / hidden)** · **share & record permission requests** · **room reset when the meeting ends** · **phone-first control bar**.
+**meeting access mode (open / host approves)** · **whiteboard** (pen, line, rect, ellipse, arrow, inline text, eraser, images, select/move/resize/lock/delete, undo, clear, zoom, pan, backgrounds, PNG/PDF export) · live cursors · **WebRTC** camera/mic · **screen share as a main stage (camera continues)** · gallery grid view · chat (public + private) · reactions · raise/lower hand · **participants panel** · **host controls** (mute all, mute one, remove, lower all hands) · **waiting room + admit/deny** · **host = meeting creator** · **draw & share permissions** (host toggles) · **end meeting for all** · **breakout rooms** · **scheduled meetings** · **virtual camera backgrounds** · **session recording** (seekable, save locally or to your server) · **whiteboard on/off for the meeting** · **shared board background set by the host** · **spotlight** · **switchable layouts (whiteboard / speaker / gallery, strip side / bottom / hidden)** · **share & record permission requests** · **room reset when the meeting ends** · **phone-first control bar** · **co-hosts** · **camera/mic/speaker picker (switchable mid-meeting)** · **pre-join preview** · **timed breakout rooms with moves, switch requests, moderator visits and announcements** · **mute on entry** · **rename yourself** · **meeting timer** · **file sharing in chat**.
 
 ---
 
@@ -366,6 +430,11 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 - **Recording on a phone cannot use a save dialog** — no mobile browser has one. Android lands in Downloads; iOS ignores the download attribute on a blob URL and opens the file instead, so the user is told to save it from the share sheet. Setting `RECORDING_UPLOAD_URL` is the reliable path on mobile.
 - **iOS records MP4, everyone else WebM.** Safari has never supported WebM recording. The extension follows the real container, and the WebM duration patch is skipped for MP4 — which means **MP4 recordings are not seekable** until something remuxes them.
 - **Google sign-in and password reset are both opt-in** and stay hidden/disabled until their environment variables are set (see §3).
+- **Chat attachments are relayed, not stored.** Someone who joins after a file was shared will not see it, and there is a 10 MB cap. Persisting them would need R2.
+- **A guest's co-host role does not survive their reconnect** — it is remembered by email, and a guest has none.
+- **The pre-join preview adds one click** for a returning guest following an invite link, where previously a remembered name went straight in. Being moved into a breakout still bypasses it.
+- **Breakout membership is decided when the rooms open.** Someone who joins the meeting afterwards is not assigned to a room until a moderator moves them.
+- Speaker (audio output) selection is Chromium-only; the field hides itself elsewhere.
 - **Board background is host-only** now that it is shared state; participants can no longer set their own.
 - A **phone always uses the bottom strip**, whichever strip position the viewer picked — a side strip does not fit.
 - The e2e test in §9 needs a **local** `wrangler dev`; there is no unit test for the DO logic yet. No rate limiting. Old rooms' DO storage is never garbage-collected.
@@ -375,13 +444,14 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Three committed suites, 77 checks in total, run with `npm test` against a
+Four committed suites, 106 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
 |---|---|---|
 | `tests/e2e.mjs` | `npm run test:e2e` | the meeting flow (38) |
 | `tests/e2e-controls.mjs` | `npm run test:controls` | active speaker, whiteboard requests, per-recording approval (16) |
+| `tests/e2e-meeting.mjs` | `npm run test:meeting` | co-hosts, devices, pre-join, breakouts, mute-on-entry, rename, timer, chat files (28) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset
@@ -427,7 +497,8 @@ Still worth adding: `vitest` + `@cloudflare/vitest-pool-workers` for the DO logi
 2. Make MP4 recordings seekable (remux, or record in fragments), so iOS output scrubs like the WebM output does.
 3. Include the **shared screen** in recordings; optionally record locally per-user or via an SFU egress.
 4. **Reconnection resync**: on WS reconnect, re-request the roster/board (currently relies on the reconnect + welcome).
-5. **Mobile/RTL polish** (this is Yasser's standing requirement: ≥44px targets, 360px width, Arabic `dir="rtl"` where relevant).
+5. Persist chat attachments in R2 so late joiners can still download them.
+6. **Mobile/RTL polish** (this is Yasser's standing requirement: ≥44px targets, 360px width, Arabic `dir="rtl"` where relevant).
 6. Move to **Cloudflare Realtime (SFU)** for large rooms; add **Cloudflare Realtime TURN** for guaranteed connectivity.
 7. Wire `npm run test:e2e` into the GitHub Action before deploy (the test exists now; CI does not run it).
 8. Garbage-collect stale room DOs (e.g., clear `shape:*` when a room has been empty for N days).
