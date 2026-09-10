@@ -84,7 +84,7 @@ export class RoomDurableObject {
     if (this.state.getWebSockets().length >= MAX_PEERS) return new Response("Room is full.", { status: 503 });
 
     const url = new URL(request.url);
-    const name = (url.searchParams.get("name") || "Guest").slice(0, 40);
+    const wanted = (url.searchParams.get("name") || "").trim().slice(0, 40);
     const email = (url.searchParams.get("email") || "").slice(0, 120);
     const guest = url.searchParams.get("guest") === "1";
     const skip = url.searchParams.get("skip") === "1"; // skip waiting (breakout re-join)
@@ -98,6 +98,11 @@ export class RoomDurableObject {
     let seq = (await this.state.storage.get("seq")) || 0;
     seq += 1;
     await this.state.storage.put("seq", seq);
+
+    // A one-link caller arrives without a name. The room gives them one, so
+    // the roster reads "Caller 2" rather than a blank label, and seq already
+    // counts arrivals so no two callers collide.
+    const name = wanted || "Caller " + seq;
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
@@ -194,7 +199,7 @@ export class RoomDurableObject {
     let startedAt = await this.state.storage.get("startedAt");
     if (!startedAt) { startedAt = Date.now(); await this.state.storage.put("startedAt", startedAt); }
     this.send(ws, {
-      type: "welcome", self: self.connId, host: this.hostId(owner), owner: owner || null,
+      type: "welcome", self: self.connId, name: self.name, host: this.hostId(owner), owner: owner || null,
       peers: others.map((p) => ({ ...p })), board, waiting, allowDraw, allowShare,
       boardOn, boardBg, spotlight, startedAt, mainRoom, breakouts, breakoutEndsAt,
       // Mute-on-entry applies to everyone but the moderators running the meeting.

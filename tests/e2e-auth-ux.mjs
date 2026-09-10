@@ -130,14 +130,14 @@ const link = await P.evaluate(() => document.getElementById('instantLink').value
 check('a one-link call produces a shareable link', /\/room\/call-[a-z0-9]+$/.test(link), link);
 await P.screenshot({ path: `${SHOT}/73-onelink.png` });
 
-// someone opening it is in the call without a host present
+// someone opening it is in the call without a host present, and without
+// being stopped for a name or a camera check on the way — see e2e-call.mjs
+// for the full contract of the one-link call.
 const G = await mk('caller');
 await G.goto(BASE, { waitUntil: 'networkidle' });
-await G.evaluate(() => localStorage.setItem('zl_name','Caller'));
+await G.evaluate(() => localStorage.setItem('zl_name','Callie'));
 await G.goto(link, { waitUntil: 'networkidle' });
-await G.waitForSelector('#prejoin:not([hidden])', { timeout: 15000 });
-await G.click('#pjJoin');
-await G.waitForSelector('#room:not([hidden])', { timeout: 15000 });
+await G.waitForSelector('#room:not([hidden])', { timeout: 20000 });
 await S(3000);
 const inCall = await G.evaluate(() => ({
   inRoom: !document.getElementById('room').hidden,

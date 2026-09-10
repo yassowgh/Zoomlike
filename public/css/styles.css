@@ -635,3 +635,8 @@ input { font: inherit; }
 .lobby-actions { display: flex; flex-direction: column; gap: 8px; }
 #instantLink { width: 100%; min-height: var(--tap); padding: 8px 12px; background: var(--panel-2);
   border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); font-size: 13px; }
+
+/* Picture-in-picture source: rendered (so the browser will float it) but
+   never seen in the page itself. */
+.pip-source { position: fixed; left: -10000px; top: 0; width: 320px; height: 180px; }
+#pipBtn.on { background: var(--accent); color: #fff; }

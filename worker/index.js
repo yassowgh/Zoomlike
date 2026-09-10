@@ -32,9 +32,12 @@ export default {
     if (url.pathname === "/api/auth/guest") {
       const body = await request.json().catch(() => ({}));
       const name = (body.name || "").toString().trim().slice(0, 40);
-      // Everyone in a meeting has to be identifiable, so a guest must give a
-      // real name. "Guest" is not one — several of them are indistinguishable.
-      if (name.length < 2 || /^guests?$/i.test(name)) {
+      // A one-link call is answered, not joined: whoever has the link is on it,
+      // and the room names them "Caller 2" when they arrive. Every other invite
+      // still needs a real name, and "Guest" is not one — a room full of them
+      // tells nobody anything.
+      const oneLink = /^call-[A-Za-z0-9_-]{1,58}$/.test((body.room || "").toString());
+      if (!(oneLink && !name) && (name.length < 2 || /^guests?$/i.test(name))) {
         return Response.json({ error: "Please enter your name so people know who you are." }, { status: 400 });
       }
       const token = await issueToken({ email: "guest:" + crypto.randomUUID(), name, guest: true }, secret);

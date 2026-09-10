@@ -282,8 +282,46 @@ that is missing.
 
 ### One-link call
 `POST /api/instant` (signed in) makes a room that is already open and already
-started, and returns its link. Whoever follows it is talking in seconds: no
-waiting room, no host needed in the room, no account — just a display name.
+started, and returns its link. A one-link call is *answered*, not joined: the
+link puts you on the call immediately, voice only.
+
+- The room name is the marker. `/api/instant` names these rooms `call-xxxxxxxx`
+  and `isCallLink()` in `main.js` keys everything off that, so the behaviour
+  travels with the link and survives a copy-paste.
+- **No name, no camera check, no account.** Following the link takes a guest
+  token straight away and joins. `/api/auth/guest` accepts an empty name only
+  when the body carries a `call-` room; every other invite still demands a real
+  one, and a made-up `room` cannot borrow the exemption.
+- Nameless callers are named by the room. `room.js` already counts arrivals in
+  `seq`, so a blank name becomes `Caller 2` and comes back in the `welcome`,
+  which the client adopts for its roster, chat and lobby chrome.
+- **Voice by default.** `startJoin()` sets `micOn` on and `camOn` off for a call
+  link and goes straight to `join()`. The camera button opens video from inside
+  the call — `toggleCam()` already acquires the track on demand and perfect
+  negotiation renegotiates.
+- The host's own "Start the call" button takes the same road, so both ends of
+  the link behave identically.
+
+### Floating video (picture-in-picture)
+Minimising the window or switching tabs must not end the call visually, so the
+video follows you as a small always-on-top window.
+
+`#pipVideo` is an off-screen `<video>` whose source tracks whoever is on the
+speaker stage (`pipSource()` falls back to any live camera in the room). It is
+positioned off-screen rather than hidden, because a `display:none` video is not
+allowed to enter picture-in-picture.
+
+Two ways in, both feeding that element:
+- `navigator.mediaSession.setActionHandler("enterpictureinpicture", …)` — the
+  automatic path. Chrome fires it exactly when the page is hidden, which is what
+  covers minimising. The name is unknown elsewhere, where the call throws and is
+  swallowed.
+- The **Float** control (`#pipBtn`), a real click and therefore a gesture, which
+  is the path that always works. It hides itself where
+  `document.pictureInPictureEnabled` is false.
+
+A `visibilitychange` listener also tries on its own; it succeeds where automatic
+PiP is permitted and is a silent no-op where it is not.
 
 ### Sign-in behaviour
 - Wrong address and wrong password give the **same** message, so the form
@@ -491,7 +529,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Eight committed suites, 143 checks in total, run with `npm test` against a
+Nine committed suites, 164 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
@@ -503,6 +541,7 @@ Eight committed suites, 143 checks in total, run with `npm test` against a
 | `tests/e2e-fixes.mjs` | `npm run test:fixes` | regressions from a real call: text size and resize, guest names, participant names, chat vs gallery, landscape phones (11) |
 | `tests/e2e-join.mjs` | `npm run test:join` | meeting defaults and join order: board off, gallery default, no join before host, room not retargetable (11) |
 | `tests/e2e-auth-ux.mjs` | `npm run test:authux` | form validation, generic credential errors, the lockout, and one-link calls (16) |
+| `tests/e2e-call.mjs` | `npm run test:call` | the one-link call end to end — no name card, no pre-join, mic on and camera off, the room's assigned name, opening the camera in-call, the floating-video wiring, and that ordinary invite links still ask who you are (21) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset

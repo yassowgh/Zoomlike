@@ -57,6 +57,7 @@ const el = {
   colorPick: $("colorPick"), sizePick: $("sizePick"), textSizePick: $("textSizePick"),
   undoBtn: $("undoBtn"), clearBtn: $("clearBtn"),
   micBtn: $("micBtn"), camBtn: $("camBtn"), shareBtn: $("shareBtn"),
+  pipBtn: $("pipBtn"), pipVideo: $("pipVideo"),
   recBtn: $("recBtn"), chatBtn: $("chatBtn"), leaveBtn: $("leaveBtn"),
   chat: $("chat"), chatLog: $("chatLog"), chatForm: $("chatForm"),
   chatInput: $("chatInput"), chatClose: $("chatClose"), toast: $("toast"),
@@ -163,6 +164,12 @@ function roomFromUrl() {
   return new URLSearchParams(location.search).get("room") || "";
 }
 
+// A one-link call. The server names these rooms and the name is the marker:
+// opening the link puts you on the call at once — no name card, no camera
+// check — with the microphone on and the camera off, the way you answer a
+// phone. The camera button turns video on once you are already talking.
+function isCallLink(room) { return /^call-[A-Za-z0-9_-]+$/.test(room || ""); }
+
 // ------------------------------------------------------------------ auth
 async function initAuth() {
   wireAuthForm();
@@ -210,7 +217,7 @@ async function initAuth() {
   // Someone following an invite link is here to attend a meeting, not to open
   // an account: send them straight in.
   const invited = roomFromUrl();
-  if (invited) return showQuickJoin(invited);
+  if (invited) return isCallLink(invited) ? joinCallLink(invited) : showQuickJoin(invited);
   showAuth();
 }
 
@@ -308,6 +315,23 @@ function showQuickJoin(room) {
   // because a room full of Guests tells nobody anything.
   if (realName(remembered)) return quickJoinAs(remembered);
   el.qjName.focus();
+}
+
+// Following a call link asks for nothing at all: we take a guest token on the
+// spot and hand straight over to the lobby, which sees the room in the URL and
+// joins. If the server turns us away we fall back to asking for a name rather
+// than leaving someone staring at a dead link.
+async function joinCallLink(room) {
+  const remembered = (localStorage.getItem("zl_name") || "").trim();
+  try {
+    const r = await fetch("/api/auth/guest", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: realName(remembered) ? remembered : "", room }),
+    });
+    if (!r.ok) return showQuickJoin(room);
+    return enterLobby(await r.json());
+  } catch { showQuickJoin(room); }
 }
 
 function wireQuickJoin() {
@@ -479,8 +503,9 @@ function enterLobby(account) {
   state.name = account.name; state.email = account.email || ""; state.token = account.token;
   state.isGuest = !!account.guest || !state.email;
   sessionStorage.setItem("zl_token", account.token);
-  el.whoami.textContent = account.name;
-  el.nameInput.value = account.name;
+  // A one-link caller has no name yet — the room assigns one when they arrive.
+  el.whoami.textContent = account.name || "Caller";
+  el.nameInput.value = account.name || "";
   el.quickJoin.hidden = true; el.resetScreen.hidden = true;
   el.auth.hidden = true; el.lobby.hidden = false; el.room.hidden = true;
   // Scheduling is for registered users only.
@@ -559,6 +584,7 @@ function onSpeechChange(active, remote) {
     t.div.classList.toggle("speaking", !!active && (realId === active || tid === active));
   }
   if (!el.spotStage.hidden && !state.spotlight) renderSpotlight();
+  if (document.pictureInPictureElement) refreshPipSource();
 }
 
 function renderSpotlight() {
@@ -1011,8 +1037,8 @@ function wireInstantCall() {
   el.instantStart.onclick = () => {
     el.instantModal.hidden = true;
     el.roomInput.value = state.instantRoom;
-    state.access = "open";
-    openPrejoin(state.instantRoom);
+    // Same road as everyone else on the link: voice on, camera off, no preview.
+    startJoin();
   };
 }
 
@@ -1025,6 +1051,13 @@ function startJoin() {
   if (!roomId) { el.lobbyHint.textContent = "Please enter a room name."; return; }
   const accessPick = document.querySelector('input[name="access"]:checked');
   state.access = accessPick && accessPick.value === "open" ? "open" : "approval";
+  // A one-link call is answered, not prepared for: voice only, straight in.
+  if (isCallLink(roomId)) {
+    state.roomId = roomId;
+    state.micOn = true; state.camOn = false;
+    state.access = "open";
+    return join();
+  }
   // skip=1 means the meeting is moving you; prejoinSkipped() means you asked
   // not to be stopped. Either way, go straight in on the remembered settings.
   if (new URLSearchParams(location.search).get("skip") === "1" || prejoinSkipped()) {
@@ -1037,9 +1070,12 @@ function startJoin() {
 
 // ----------------------------------------------------------------- join
 async function join() {
-  const name = (el.nameInput.value || "Guest").trim().slice(0, 40) || "Guest";
   const roomId = (el.roomInput.value || "").trim().replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64);
   if (!roomId) { el.lobbyHint.textContent = "Please enter a room name."; return; }
+  // A one-link caller may have given no name — the room answers with the one
+  // it assigned them. Everyone else has been asked for theirs by now.
+  const typed = (el.nameInput.value || "").trim().slice(0, 40);
+  const name = typed || (isCallLink(roomId) ? "" : "Guest");
 
   state.name = name; state.roomId = roomId;
   // state.micOn / state.camOn and the device choices were settled on the
@@ -1047,7 +1083,7 @@ async function join() {
   const params = new URLSearchParams(location.search);
   state.skip = params.get("skip") === "1";
   state.mainRoom = params.get("main") || "";
-  localStorage.setItem("zl_name", name);
+  if (name) localStorage.setItem("zl_name", name);
 
   el.joinBtn.disabled = true;
   el.lobbyHint.textContent = "Getting camera & microphone…";
@@ -1098,6 +1134,80 @@ function applyTrackState() {
   el.camBtn.classList.toggle("off", !state.camOn);
   el.micBtn.textContent = state.micOn ? "🎙️" : "🔇";
   el.camBtn.textContent = state.camOn ? "📷" : "🚫";
+}
+
+// --------------------------------------------------- floating video (PiP)
+// Minimising the window or switching tabs should not end the call visually:
+// the video follows you as a small always-on-top window.
+//
+// Two ways in. Chrome gives video-conferencing sites an automatic
+// picture-in-picture through the media session, which fires exactly when the
+// page is hidden — that is the one that survives minimising. Everywhere else
+// the Float button does the same thing on demand. Both feed the same
+// off-screen <video>, whose source follows whoever is on the speaker stage.
+function pipSource() {
+  const id = pickSpeaker();
+  const tile = state.tiles.get(id === state.selfId ? "self" : id);
+  const stream = tile?.stream;
+  if (stream && stream.getVideoTracks().some((t) => t.readyState === "live")) return stream;
+  // Nobody on stage has video — fall back to any live camera in the room, so
+  // "the camera is open" always has something to float.
+  for (const t of state.tiles.values()) {
+    if (t.stream?.getVideoTracks().some((v) => v.readyState === "live")) return t.stream;
+  }
+  return null;
+}
+
+function refreshPipSource() {
+  const stream = pipSource();
+  if (!stream) return null;
+  if (el.pipVideo.srcObject !== stream) el.pipVideo.srcObject = stream;
+  el.pipVideo.play?.().catch(() => {});
+  return stream;
+}
+
+async function enterPip() {
+  if (!el.pipVideo?.requestPictureInPicture) return false;
+  if (document.pictureInPictureElement === el.pipVideo) return true;
+  if (!refreshPipSource()) return false;
+  try {
+    await el.pipVideo.requestPictureInPicture();
+    return true;
+  } catch {
+    // Refused (unsupported, disabled by the user, or no gesture to spend).
+    return false;
+  }
+}
+
+async function exitPip() {
+  try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); } catch {}
+}
+
+function setupPip() {
+  const supported = !!(document.pictureInPictureEnabled && el.pipVideo?.requestPictureInPicture);
+  if (el.pipBtn) el.pipBtn.hidden = !supported;
+  if (!supported) return;
+
+  el.pipBtn.onclick = () => {
+    if (document.pictureInPictureElement) return exitPip();
+    // A click is a gesture, so this is the path that always works. If there is
+    // no video anywhere yet, say so rather than failing silently.
+    if (!pipSource()) return toast("Turn a camera on first — there is no video to float");
+    enterPip();
+  };
+  el.pipVideo.addEventListener("enterpictureinpicture", () => el.pipBtn.classList.add("on"));
+  el.pipVideo.addEventListener("leavepictureinpicture", () => el.pipBtn.classList.remove("on"));
+
+  // Chrome floats the call by itself once this handler is registered; the name
+  // is unknown elsewhere, where setActionHandler throws instead.
+  try { navigator.mediaSession?.setActionHandler?.("enterpictureinpicture", () => enterPip()); } catch {}
+
+  // Browsers without that action still hide the page when it is minimised, so
+  // try anyway: it succeeds where automatic PiP is allowed and is a silent
+  // no-op where it is not.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) enterPip();
+  });
 }
 
 // ----------------------------------------------------------- whiteboard
@@ -1199,6 +1309,7 @@ function setupControls() {
   el.micBtn.onclick = () => toggleMic();
   el.camBtn.onclick = () => toggleCam();
   el.shareBtn.onclick = () => toggleShare();
+  setupPip();
 
   // Raise / lower hand.
   el.handBtn.onclick = () => {
@@ -1586,6 +1697,7 @@ async function stopRecording() {
 }
 
 function leave() {
+  exitPip();
   try { state.recorder?.recording && state.recorder.stop(state.roomId); } catch {}
   state.speech?.stop();
   state.sig?.close();
@@ -1661,6 +1773,14 @@ function connect() {
     state.breakoutEndsAt = breakoutEndsAt || null;
     if (mainRoom && !state.mainRoom) state.mainRoom = mainRoom;
     state.selfId = self; state.host = host; state.waiting = waiting !== false;
+    // A one-link caller arrived nameless and the room named them. Adopt it so
+    // the roster, the chat and the self tile all say the same thing.
+    if (!state.name && e.detail.name) {
+      state.name = e.detail.name;
+      sig.name = state.name;
+      el.nameInput.value = state.name;
+      el.whoami.textContent = state.name;
+    }
     state.speech?.setSelfId(self);
     state.allowDraw = !!allowDraw; state.allowShare = !!allowShare;
     state.grantShare = !!e.detail.grantShare; state.grantRecord = !!e.detail.grantRecord;

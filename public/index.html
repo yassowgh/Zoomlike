@@ -379,6 +379,7 @@
         <div class="ctrl-item" data-pri="1"><button id="micBtn" class="ctrl" title="Mute / unmute">🎙️</button><span class="cl">Mute</span></div>
         <div class="ctrl-item" data-pri="1"><button id="camBtn" class="ctrl" title="Camera on / off">📷</button><span class="cl">Camera</span></div>
         <div class="ctrl-item" data-pri="2"><button id="shareBtn" class="ctrl" title="Share your screen">🖥️</button><span class="cl">Share</span></div>
+        <div class="ctrl-item" data-pri="2"><button id="pipBtn" class="ctrl" title="Float the video above your other windows">🪟</button><span class="cl">Float</span></div>
         <div class="ctrl-item ctrl-pop" data-pri="2">
           <button id="bgVideoBtn" class="ctrl" title="Virtual background">🌄</button><span class="cl">Effects</span>
           <div id="bgVideoMenu" class="pop-menu" hidden>
@@ -410,6 +411,10 @@
         <div class="ctrl-item ctrl-more"><button id="moreCtrlBtn" class="ctrl" title="More controls">⋯</button><span class="cl">More</span></div>
         <div class="ctrl-item" data-pri="1"><button id="leaveBtn" class="ctrl leave" title="Leave meeting">✕</button><span class="cl">Leave</span></div>
       </div>
+
+      <!-- The source for the floating window. Laid out off-screen rather than
+           hidden: a display:none video is not allowed to enter picture-in-picture. -->
+      <video id="pipVideo" class="pip-source" playsinline muted></video>
 
       <!-- Everyone can see when the meeting is being recorded -->
       <div id="recBanner" class="rec-banner" hidden></div>
