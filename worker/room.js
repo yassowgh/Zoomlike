@@ -25,14 +25,14 @@ const MAX_PEERS = 20;
 // itself and deliberately survives.
 const SESSION_KEYS = [
   "breakouts", "allowDraw", "allowShare", "spotlight", "boardOn", "boardBg",
-  "cohosts", "muteOnEntry", "startedAt", "breakoutEndsAt",
+  "cohosts", "muteOnEntry", "startedAt", "breakoutEndsAt", "started",
 ];
 
 // A chat attachment is relayed in slices: Durable Object WebSocket messages
 // top out around 1 MiB, and a slice has to fit with room to spare.
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
-const DEFAULT_BG = "dark";
+const DEFAULT_BG = "white";
 
 export class RoomDurableObject {
   constructor(state, env) {
@@ -58,7 +58,9 @@ export class RoomDurableObject {
       }
       // Used when a breakout room is created, so the meeting's moderators are
       // moderators inside it too rather than whoever walks in first.
-      if (Array.isArray(cohosts)) await this.state.storage.put("cohosts", cohosts);
+      // A breakout room exists because a moderator opened it, so it counts as
+      // started even before anyone walks in.
+      if (Array.isArray(cohosts)) { await this.state.storage.put("cohosts", cohosts); await this.state.storage.put("started", true); }
       if (mainRoom) await this.state.storage.put("mainRoom", mainRoom);
       if (endsAt) await this.state.storage.put("breakoutEndsAt", endsAt);
       return new Response("ok");
@@ -176,8 +178,9 @@ export class RoomDurableObject {
     const board = await this.loadBoard();
     const allowDraw = (await this.state.storage.get("allowDraw")) === true;
     const allowShare = (await this.state.storage.get("allowShare")) === true;
-    const boardOn = (await this.state.storage.get("boardOn")) !== false;
+    const boardOn = (await this.state.storage.get("boardOn")) === true;
     const boardBg = (await this.state.storage.get("boardBg")) || DEFAULT_BG;
+    const started = (await this.state.storage.get("started")) === true;
     const spotlight = (await this.state.storage.get("spotlight")) || null;
     const muteOnEntry = (await this.state.storage.get("muteOnEntry")) === true;
     const cohosts = (await this.state.storage.get("cohosts")) || [];
@@ -202,6 +205,10 @@ export class RoomDurableObject {
       canRecord: self.moderator || self.grantRecord,
     });
     this.broadcastAdmitted({ type: "peer-join", id: self.connId, name: self.name, moderator: !!self.moderator }, self.connId);
+    // Anyone parked on "not started yet" can try again now the host is here.
+    if (self.moderator) {
+      for (const p of this.peers()) if (!p.admitted && p.connId !== self.connId) this.send(p.ws, { type: "meeting-open" });
+    }
     // Moderators need to see anyone already waiting.
     if (self.moderator) {
       for (const p of this.peers()) {
@@ -236,7 +243,21 @@ export class RoomDurableObject {
       const amOwner = canOwn && own === self.email;
       const waiting = (await this.state.storage.get("waiting")) !== false;
       const host = this.hostId(own);
-      if (amOwner || self.skip || !waiting || !host) {
+
+      // The owner arriving is what opens the meeting.
+      if (amOwner) await this.state.storage.put("started", true);
+      const started = (await this.state.storage.get("started")) === true;
+
+      // An invite link is not a key to an empty room. Until the host has
+      // opened the meeting, everyone else waits — this used to admit them
+      // precisely BECAUSE no host was present, which was backwards.
+      // skip=1 means the meeting itself is placing them (a breakout room),
+      // which the host opened by definition and where no host is present.
+      if (!amOwner && !self.skip && (!started || !host)) {
+        this.send(ws, { type: "not-started" });
+        return;
+      }
+      if (amOwner || self.skip || !waiting) {
         this.setMeta(ws, { admitted: true });
         await this.admitSend(ws);
       } else {

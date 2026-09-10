@@ -111,16 +111,21 @@ check('6 · non-host cannot change the shared background', !guestCanChangeBg);
 await G.screenshot({path:`${SHOT}/03-guest-bg-white.png`});
 
 // ---------- item 3: whiteboard on/off ----------
-await H.click('#moreBtn'); await S(250);
-await H.click('#boardToggleBtn'); await S(900);
-const guestBoardHidden = await G.evaluate(()=>document.getElementById('boardWrap').hidden);
-const guestLayout = await G.evaluate(()=>document.getElementById('room').dataset.layout);
-check('3 · host turning the whiteboard off hides it for the guest', guestBoardHidden, `guest layout=${guestLayout}`);
+// A meeting opens with the whiteboard off and the gallery showing.
+check('3 · the whiteboard starts off for everyone',
+      await G.evaluate(()=>window.__zl_state.boardOn)===false && await G.evaluate(()=>document.getElementById('boardWrap').hidden));
 await G.screenshot({path:`${SHOT}/04-guest-board-off.png`});
 await H.click('#moreBtn'); await S(250);
+await H.click('#boardToggleBtn'); await S(900);   // host turns it ON
+const guestBoardOn = await G.evaluate(()=>window.__zl_state.boardOn);
+check('3 · the host turning it on gives the guest the whiteboard', guestBoardOn===true);
+await H.click('#moreBtn'); await S(250);
+await H.click('#boardToggleBtn'); await S(900);   // and OFF again
+check('3 · turning it off takes it away again',
+      await G.evaluate(()=>document.getElementById('boardWrap').hidden)===true);
+// Leave it on for the rest of the run.
+await H.click('#moreBtn'); await S(250);
 await H.click('#boardToggleBtn'); await S(900);
-const guestBoardBack = await G.evaluate(()=>!document.getElementById('boardWrap').hidden);
-check('3 · turning it back on restores the whiteboard', guestBoardBack);
 
 // ---------- item 7: layouts ----------
 await H.click('#viewBtn'); await S(250);
@@ -208,6 +213,11 @@ check('11 · clearing the spotlight returns the viewer to their own layout',
       !guestAfter.spot && guestAfter.eff===guestPrefBefore, `pref=${guestPrefBefore} -> ${JSON.stringify(guestAfter)}`);
 
 // ---------- item 4: mobile ----------
+// Drawing tools only exist for someone allowed to draw on a board that is on.
+// #peopleBtn toggles, so only click it when the panel is actually closed.
+if (await H.evaluate(()=>document.getElementById('people').hidden)) { await H.click('#peopleBtn'); await S(500); }
+await H.check('#allowDrawToggle'); await S(600);
+await H.click('#peopleClose'); await S(300);
 const M = await ctx('mobile', {width:390,height:844});
 await M.evaluate(()=>{}).catch(()=>{});
 await M.goto(BASE,{waitUntil:'networkidle'});
@@ -218,6 +228,10 @@ await M.screenshot({path:`${SHOT}/36-mobile-prejoin.png`});
 await M.click('#pjJoin');
 await M.waitForSelector('#room:not([hidden])',{timeout:15000});
 await S(3500);
+// The default view is the gallery, where there is no board on screen and so
+// no drawing tools. Switch to the whiteboard to exercise the toolbox button.
+await M.click('#viewBtn'); await S(300);
+await M.click('#viewMenu [data-view="board"]'); await S(800);
 const mob = await M.evaluate(()=>{
   const vis = e => e && e.offsetParent !== null;
   const ctrls = [...document.querySelectorAll('#controls .ctrl-item')];
@@ -272,8 +286,9 @@ const after = await R.evaluate(()=>({
   spotlight: window.__zl_state?.spotlight,
 }));
 check('2 · board is wiped for the next meeting', after.shapes===0, `shapes=${after.shapes}`);
-check('2 · board background reset to default', after.bg==='dark', `bg=${after.bg}`);
-check('2 · whiteboard re-enabled and spotlight cleared', after.boardOn===true && !after.spotlight, JSON.stringify(after));
+check('2 · board background reset to the default', after.bg==='white', `bg=${after.bg}`);
+// A fresh meeting starts with the whiteboard off again, like any new one.
+check('2 · whiteboard back to off and spotlight cleared', after.boardOn===false && !after.spotlight, JSON.stringify(after));
 await R.screenshot({path:`${SHOT}/13-fresh-room.png`});
 
 console.log('\n===== SUMMARY =====');

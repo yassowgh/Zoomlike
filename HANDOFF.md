@@ -280,6 +280,20 @@ new track and hands it to every peer via `replaceTrack`, so nobody is
 disconnected. Speaker choice needs `setSinkId` and the field hides itself where
 that is missing.
 
+### A meeting has to be opened before anyone can join
+An invite link is not a key to an empty room. Until the **owner** has joined
+once (`started`, a session key), everyone else is held on a "hasn't started
+yet" screen and let in automatically when the host arrives. `skip=1` bypasses
+this, because that marks the meeting *placing* someone — a breakout room, which
+a moderator opened by definition and where no host is present.
+
+### Defaults a meeting opens with
+- **Whiteboard off.** The host turns it on; everyone else asks.
+- **Gallery view**, so you see faces first.
+- **White board background**, with a dark default pen so strokes show up.
+Drawing tools are hidden entirely without draw permission — a toolbar that
+silently does nothing is worse than no toolbar.
+
 ### Pre-join preview
 Everyone passes through a camera/mic check on the way in, with two exceptions:
 - **`skip=1`** — the meeting is moving you (into or out of a breakout). Being
@@ -458,7 +472,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Six committed suites, 137 checks in total, run with `npm test` against a
+Seven committed suites, 127 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
@@ -468,6 +482,7 @@ Six committed suites, 137 checks in total, run with `npm test` against a
 | `tests/e2e-meeting.mjs` | `npm run test:meeting` | co-hosts, devices, pre-join, breakouts, mute-on-entry, rename, timer, chat files (28) |
 | `tests/e2e-mobile.mjs` | `npm run test:mobile` | every screen and panel at 390px and 320px: overflow, tap targets, covered controls, skippable pre-join (20) |
 | `tests/e2e-fixes.mjs` | `npm run test:fixes` | regressions from a real call: text size and resize, guest names, participant names, chat vs gallery, landscape phones (11) |
+| `tests/e2e-join.mjs` | `npm run test:join` | meeting defaults and join order: board off, gallery default, no join before host, room not retargetable (11) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset

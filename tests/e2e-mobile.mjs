@@ -93,8 +93,10 @@ await H.fill('#roomInput', room); await H.click('#joinBtn');
 await H.waitForSelector('#prejoin:not([hidden])', { timeout: 15000 });
 await H.click('#pjJoin'); await H.waitForSelector('#room:not([hidden])', { timeout: 15000 });
 await S(2000);
-// let the phone draw, so the whiteboard toolbar is meaningful
-await H.click('#peopleBtn'); await S(400); await H.check('#allowDrawToggle'); await S(400); await H.click('#peopleClose');
+// The whiteboard starts off and drawing is host-only, so turn both on or the
+// phone has no toolbox to audit.
+await H.click('#peopleBtn'); await S(400); await H.check('#allowDrawToggle'); await S(400); await H.click('#peopleClose'); await S(300);
+await H.click('#moreBtn'); await S(300); await H.click('#boardToggleBtn'); await S(800);
 
 // ---------- 1. auth screen on a phone ----------
 const A = await phone('auth');
@@ -145,7 +147,12 @@ const panels = [
   ['devices',  async () => { await M.click('#moreBtn'); await S(250); await M.click('#devicesBtn'); }],
   ['rename',   async () => { await M.click('#moreBtn'); await S(250); await M.click('#renameBtn'); }],
   ['controls', async () => { await M.click('#moreCtrlBtn'); }],
-  ['tools',    async () => { await M.click('#toolsBtn'); }],
+  // The default view is the gallery, which has no board and so no tools.
+  ['tools',    async () => {
+    await M.click('#viewBtn'); await S(300);
+    await M.click('#viewMenu [data-view="board"]'); await S(800);
+    await M.click('#toolsBtn');
+  }],
 ];
 for (const [name, open] of panels) {
   await M.keyboard.press('Escape').catch(() => {});

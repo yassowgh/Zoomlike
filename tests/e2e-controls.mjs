@@ -29,7 +29,8 @@ await G.waitForSelector('#room:not([hidden])',{timeout:15000});await S(3500);
 check('two peers connected', await H.evaluate(()=>document.querySelectorAll('#videos .tile').length)===2);
 
 // ---- 17: whiteboard start needs host approval ----
-await H.click('#moreBtn');await S(250);await H.click('#boardToggleBtn');await S(900); // host turns board OFF
+// A meeting already opens with the whiteboard off, so there is nothing to
+// turn off first.
 check('17 · board off for guest', await G.evaluate(()=>window.__zl_state.boardOn)===false);
 const guestBtn = await G.evaluate(()=>{const b=document.getElementById('boardToggleBtn');return{hidden:b.hidden,text:b.textContent.trim()};});
 check('17 · guest is offered "ask to start"', !guestBtn.hidden && /Ask to start/i.test(guestBtn.text), JSON.stringify(guestBtn));

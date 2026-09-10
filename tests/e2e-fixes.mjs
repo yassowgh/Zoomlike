@@ -37,6 +37,13 @@ await H.click('#pjJoin'); await H.waitForSelector('#room:not([hidden])', { timeo
 await S(2000);
 
 // ---------- whiteboard text is readable by default, and resizable ----------
+// Meetings open in the gallery with the whiteboard off, so switch both on.
+await H.click('#moreBtn'); await S(300);
+await H.click('#boardToggleBtn'); await S(900);
+await H.click('#viewBtn'); await S(300);
+await H.click('#viewMenu [data-view="board"]'); await S(800);
+check('the board background defaults to white',
+      await H.evaluate(() => document.getElementById('boardWrap').dataset.bg) === 'white');
 check('text size control defaults to 12', await H.evaluate(() => document.getElementById('textSizePick').value) === '12');
 await H.click('#toolbar .tool[data-tool="text"]'); await S(300);
 const box = await H.evaluate(() => { const r = document.getElementById('overlay').getBoundingClientRect(); return { x: r.x, y: r.y }; });
@@ -143,14 +150,20 @@ await L.click('#pjJoin'); await L.waitForSelector('#room:not([hidden])', { timeo
 await S(2500);
 const land = await L.evaluate(() => {
   const vis = e => e && e.offsetParent !== null;
+  const btxt = document.querySelector('.btxt');
   return {
     toolbar: vis(document.getElementById('toolbar')),
-    toolsBtn: vis(document.getElementById('toolsBtn')),
-    more: vis(document.getElementById('moreCtrlBtn')),
+    more: vis(document.getElementById('moreCtrlBtn')),          // phone-only control
+    labelsHidden: btxt ? getComputedStyle(btxt).display === 'none' : null, // phone-only rule
+    hiddenControls: [...document.querySelectorAll('#controls .ctrl-item[data-pri="2"]')]
+      .filter(e => e.offsetParent === null).length,
   };
 });
-check('a landscape phone keeps the phone layout, not the desktop toolbar',
-      !land.toolbar && land.toolsBtn && land.more, JSON.stringify(land));
+// The toolbox button depends on draw permission and the board being on, which
+// is not what this is testing; the phone-only rules are.
+check('a landscape phone keeps the phone layout, not the desktop one',
+      !land.toolbar && land.more && land.labelsHidden === true && land.hiddenControls > 0,
+      JSON.stringify(land));
 await L.screenshot({ path: `${SHOT}/53-landscape.png` });
 
 console.log('\n===== SUMMARY =====');

@@ -617,3 +617,12 @@ input { font: inherit; }
   width: 52px; min-height: 34px; text-align: center; background: var(--panel-2);
   border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 2px 4px;
 }
+
+/* Gallery tiles show the whole frame. `cover` crops a webcam hard enough that
+   people complained of being zoomed in on. */
+.room[data-layout="gallery"] .tile video { object-fit: contain; background: #05080f; }
+
+/* A long device name must not stretch the pre-join grid past its card. */
+.prejoin-card { grid-template-columns: 1.15fr minmax(0, 1fr); }
+.prejoin-side select, .prejoin-side input { width: 100%; max-width: 100%; }
+.prejoin-side .field { min-width: 0; }

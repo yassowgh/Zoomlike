@@ -74,6 +74,7 @@ const el = {
   chatTo: $("chatTo"),
   // waiting room + host tools
   waitingScreen: $("waitingScreen"), waitRoom: $("waitRoom"), waitLeave: $("waitLeave"),
+  notStarted: $("notStarted"), notStartedLeave: $("notStartedLeave"),
   waitingWrap: $("waitingWrap"), waitingList: $("waitingList"), hostTools: $("hostTools"),
   lowerHandsBtn: $("lowerHandsBtn"), waitingToggle: $("waitingToggle"), breakoutBtn: $("breakoutBtn"),
   // breakout
@@ -108,9 +109,9 @@ const state = {
   screenIds: new Map(), // peerId -> announced screen stream id
   seenStreams: new Map(), // peerId -> [streams]
   // Shared meeting surface (host-controlled, mirrored to everyone).
-  boardOn: true, boardBg: "dark", spotlight: null,
+  boardOn: false, boardBg: "white", spotlight: null,
   // Per-viewer view preference.
-  layout: "board", strip: "right",
+  layout: "gallery", strip: "right",
   // Screen share currently on the main stage, and whether this viewer hid it.
   screenActive: null, screenDismissed: false,
   // Host-side queue of pending "may I share / record?" asks.
@@ -646,6 +647,11 @@ function routeStream(peerId, name, stream) {
 
 function applyPermUI() {
   el.noDrawHint.hidden = state.canDraw || !state.boardOn;
+  // No permission, no tools. A full toolbar that silently does nothing is
+  // worse than no toolbar at all.
+  el.toolbar.hidden = !state.canDraw;
+  el.toolsBtn.hidden = !state.canDraw;
+  if (!state.canDraw) el.boardWrap.classList.remove("tools-open");
   // Share and record stay enabled without permission — pressing them asks the
   // host rather than doing nothing.
   el.shareBtn.title = state.canShare ? "Share your screen" : "Ask the host to let you share";
@@ -890,6 +896,10 @@ let lobbyWired = false;
 function initLobby() {
   const urlRoom = roomFromUrl();
   el.roomInput.value = urlRoom || randomRoom();
+  // Arriving on an invite link means joining THAT meeting. Leaving the field
+  // editable let an invitee type over it and end up alone in another room.
+  el.roomInput.readOnly = !!urlRoom;
+  el.randomRoomBtn.hidden = !!urlRoom;
   if (!lobbyWired) {
     lobbyWired = true;
     el.randomRoomBtn.onclick = () => (el.roomInput.value = randomRoom());
@@ -1170,6 +1180,7 @@ function setupControls() {
 
   // Waiting room (participant) cancel.
   el.waitLeave.onclick = () => leave();
+  el.notStartedLeave.onclick = () => leave();
 
   // Breakout rooms (host).
   el.breakoutBtn.onclick = () => { showPanel("breakout"); renderBreakoutState(); };
@@ -1232,7 +1243,7 @@ function setupControls() {
   });
 
   // Board background picker — host only, and shared with the whole meeting.
-  applyBackground(state.boardBg);
+  applyBackground(state.boardBg || "white");
   el.bgBtn.onclick = (e) => {
     e.stopPropagation();
     el.moreMenu.hidden = true;
@@ -1309,7 +1320,7 @@ function setupControls() {
   window.addEventListener("resize", syncTopbarHeight);
 
   // Restore this viewer's layout preference.
-  state.layout = localStorage.getItem("zl_layout") || "board";
+  state.layout = localStorage.getItem("zl_layout") || "gallery";
   state.strip = localStorage.getItem("zl_strip") || "right";
   applyLayout();
 
@@ -1335,7 +1346,10 @@ function setupControls() {
   };
   el.chatBtn.onclick = () => {
     if (panelOpen("chat")) return closePanels();
-    showPanel("chat"); el.chatInput.focus();
+    showPanel("chat");
+    // On a phone, focusing the field throws the keyboard up over the messages
+    // you opened the panel to read. Let them tap the field themselves.
+    if (!isTouchLayout()) el.chatInput.focus();
   };
   el.chatClose.onclick = () => closePanels();
   el.chatForm.onsubmit = (e) => {
@@ -1514,12 +1528,24 @@ function connect() {
   sig.addEventListener("open", () => { el.connState.textContent = "connected"; el.connState.classList.add("ok"); });
   sig.addEventListener("close", () => { el.connState.textContent = "reconnecting…"; el.connState.classList.remove("ok"); });
 
+  sig.addEventListener("not-started", () => {
+    el.notStarted.hidden = false;
+    el.waitingScreen.hidden = true;
+  });
+  // The host has arrived — say hello again and go in.
+  sig.addEventListener("meeting-open", () => {
+    el.notStarted.hidden = true;
+    sig.send({ type: "hello", access: state.access });
+  });
+
   sig.addEventListener("waiting", () => {
+    el.notStarted.hidden = true;
     el.waitingScreen.hidden = false;
     el.waitRoom.textContent = state.roomId;
   });
 
   sig.addEventListener("welcome", (e) => {
+    el.notStarted.hidden = true;
     const { self, host, peers, board, waiting, allowDraw, allowShare,
             boardOn, boardBg, spotlight, startedAt, muteOnEntry, moderator,
             isHost: amHost, breakouts, breakoutEndsAt, mainRoom } = e.detail;
@@ -1532,9 +1558,9 @@ function connect() {
     state.speech?.setSelfId(self);
     state.allowDraw = !!allowDraw; state.allowShare = !!allowShare;
     state.grantShare = !!e.detail.grantShare; state.grantRecord = !!e.detail.grantRecord;
-    state.boardOn = boardOn !== false;
+    state.boardOn = boardOn === true;
     state.spotlight = spotlight || null;
-    applyBackground(boardBg || "dark");
+    applyBackground(boardBg || "white");
     el.waitingScreen.hidden = true; // admitted
     mesh.setSelf(self);
     state.board.loadShapes(board);
@@ -1972,7 +1998,7 @@ function personRow(id, name, s, self) {
     return b;
   };
 
-  action("Message", () => { el.chatTo.value = id; showPanel("chat"); el.chatInput.focus(); });
+  action("Message", () => { el.chatTo.value = id; showPanel("chat"); if (!isTouchLayout()) el.chatInput.focus(); });
 
   // Only the host hands out co-host, so a co-host cannot promote others.
   if (isHost()) {
@@ -2135,6 +2161,11 @@ function showReaction(name, emoji) {
 
 // Every side panel occupies the same strip down the right-hand side, so only
 // one may be open at a time.
+// Phones and short windows: the same breakpoint the stylesheet uses.
+function isTouchLayout() {
+  return window.matchMedia("(max-width: 720px), (max-height: 520px)").matches;
+}
+
 const SIDE_PANELS = ["people", "chat", "breakout", "devices"];
 function showPanel(which) {
   for (const id of SIDE_PANELS) {
