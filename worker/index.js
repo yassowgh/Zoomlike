@@ -182,13 +182,10 @@ export default {
     if (url.pathname === "/api/config") {
       return Response.json({
         recordingUploadUrl: env.RECORDING_UPLOAD_URL || "",
-        iceServers: buildIceServers(env),
+        ...(await iceConfig(env)),
         // Let the UI hide options this deployment cannot actually perform.
         googleAuth: googleConfigured(env),
         passwordReset: mailConfigured(env),
-        // Whether a real relay is configured. Without one, anybody behind a
-        // strict NAT (most mobile networks) cannot connect at all.
-        turn: !!(env.TURN_URLS || "").trim(),
       });
     }
 
@@ -284,26 +281,76 @@ async function sendResetEmail(env, to, name, link) {
   return false;
 }
 
-function buildIceServers(env) {
-  const servers = [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-  ];
+const STUN = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
 
-  // Custom TURN (from env) takes priority when configured.
-  const turnUrls = (env.TURN_URLS || "").split(",").map((s) => s.trim()).filter(Boolean);
-  if (turnUrls.length) {
-    servers.push({
-      urls: turnUrls,
-      username: env.TURN_USERNAME || undefined,
-      credential: env.TURN_CREDENTIAL || undefined,
-    });
-  } else {
-    // Free public TURN relay (Open Relay) so people on different networks /
-    // behind strict NATs can still connect out of the box. For heavy use,
-    // set your own TURN via the TURN_* variables (e.g. Cloudflare Realtime TURN).
-    const openRelay = ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"];
-    servers.push({ urls: openRelay, username: "openrelayproject", credential: "openrelayproject" });
+// Cloudflare Realtime TURN issues SHORT-LIVED credentials rather than a fixed
+// username and password: you hold a TURN key id and an API token, and mint
+// credentials from them. Cached per isolate so a busy room does not re-mint on
+// every page load.
+let turnCache = null; // { servers, exp }
+
+async function cloudflareTurn(env) {
+  const keyId = (env.TURN_KEY_ID || "").trim();
+  const token = (env.TURN_API_TOKEN || "").trim();
+  if (!keyId || !token) return { servers: null, error: "" };
+  if (turnCache && turnCache.exp > Date.now() + 60_000) return { servers: turnCache.servers, error: "" };
+
+  const ttl = 6 * 60 * 60; // seconds
+  const base = `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}`;
+  // Cloudflare has shipped two shapes of this call; try the newer one first.
+  const endpoints = [`${base}/credentials/generate-ice-servers`, `${base}/credentials/generate`];
+  let error = "";
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+        body: JSON.stringify({ ttl }),
+      });
+      const body = await r.text();
+      if (!r.ok) { error = `${r.status} ${body.slice(0, 120)}`; continue; }
+      const servers = normaliseIce(JSON.parse(body));
+      if (servers.length) {
+        turnCache = { servers, exp: Date.now() + ttl * 1000 };
+        return { servers, error: "" };
+      }
+      error = "no iceServers in response";
+    } catch (err) {
+      error = String(err && err.message || err).slice(0, 120);
+    }
   }
-  return servers;
+  return { servers: null, error };
+}
+
+// Accepts either { iceServers: {...} } or { iceServers: [...] } or a bare list.
+function normaliseIce(data) {
+  const raw = data && data.iceServers != null ? data.iceServers : data;
+  const list = Array.isArray(raw) ? raw : [raw];
+  return list
+    .filter((s) => s && s.urls && (Array.isArray(s.urls) ? s.urls.length : true))
+    .map((s) => ({ urls: s.urls, username: s.username, credential: s.credential }));
+}
+
+async function iceConfig(env) {
+  // 1. A fixed TURN server, if one is configured.
+  const fixed = (env.TURN_URLS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (fixed.length) {
+    return {
+      iceServers: [...STUN, { urls: fixed, username: env.TURN_USERNAME || undefined, credential: env.TURN_CREDENTIAL || undefined }],
+      turn: true, turnSource: "static", turnError: "",
+    };
+  }
+
+  // 2. Cloudflare Realtime TURN, minted on demand.
+  const { servers, error } = await cloudflareTurn(env);
+  if (servers && servers.length) {
+    return { iceServers: [...STUN, ...servers], turn: true, turnSource: "cloudflare", turnError: "" };
+  }
+
+  // 3. Nothing usable. STUN alone works on friendly networks and fails behind
+  // a strict NAT, which is most mobile data — so say so rather than pretending.
+  return { iceServers: STUN, turn: false, turnSource: "none", turnError: error };
 }

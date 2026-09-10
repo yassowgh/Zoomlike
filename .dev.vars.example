@@ -31,11 +31,19 @@ MAIL_FROM=
 
 # --- TURN relay (strongly recommended) ------------------------------------
 # Without a relay, anyone behind a strict NAT - which is most mobile networks -
-# cannot connect, and appears in the participant list with no video. The
-# built-in fallback is a free public relay that is no longer dependable.
+# cannot connect, and appears in the participant list with no video.
 #
-# Cloudflare Realtime TURN has a free tier: dash.cloudflare.com -> Realtime ->
-# TURN -> create, then set these three as Worker variables/secrets.
+# Cloudflare Realtime TURN (free tier) does NOT give a fixed username and
+# password. You create a TURN key and get an ID and an API token, and the
+# Worker mints short-lived credentials from them at runtime. Set these two:
+TURN_KEY_ID=
+TURN_API_TOKEN=
+
+# Or, for any other TURN provider that issues fixed credentials, use these
+# three instead. They take priority over the pair above when set.
 TURN_URLS=
 TURN_USERNAME=
 TURN_CREDENTIAL=
+
+# Check which one is in use at /api/config: "turnSource" is "cloudflare",
+# "static" or "none", and "turnError" explains any failure.

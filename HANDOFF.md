@@ -99,7 +99,8 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=8831301adf4783f131f995656cbb8eec 
 |---|---|---|
 | `AUTH_SECRET` | **secret** (`wrangler secret put`) | Signs login JWTs. Falls back to `"dev-secret-change-me"` if unset (don't ship that). |
 | `RECORDING_UPLOAD_URL` | var | If set, recordings POST here (multipart `file`,`room`,`recordedAt`) with CORS from the app origin. Empty = save to computer. |
-| `TURN_URLS`,`TURN_USERNAME`,`TURN_CREDENTIAL` | vars | Optional custom TURN. If unset, a free public Open Relay TURN is used by default. |
+| `TURN_KEY_ID` + `TURN_API_TOKEN` | var + **secret** | Cloudflare Realtime TURN. It issues **short-lived** credentials, not a fixed username/password: the Worker mints them from these at runtime and caches them per isolate. |
+| `TURN_URLS`,`TURN_USERNAME`,`TURN_CREDENTIAL` | vars | Any other TURN provider with fixed credentials. Takes priority over the pair above. |
 | `GOOGLE_CLIENT_ID` | var | Google OAuth web client id. Unset ⇒ the "Continue with Google" button is hidden. |
 | `GOOGLE_CLIENT_SECRET` | **secret** | Google OAuth client secret. Both must be set for Google sign-in to appear. |
 | `RESEND_API_KEY` + `MAIL_FROM` | **secret** + var | Sends password-reset email through Resend. |
@@ -437,7 +438,8 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 - **Images** are stored as data URLs in DO storage (SQLite value limit ~2 MiB) and broadcast over WS — keep them downscaled; the persist is wrapped in try/catch so a too-large image still shows live but may not persist for late joiners.
 - **Whiteboard move/resize** sync the **final** state on pointer-up (no live intermediate frames).
 - **Draw/share permission** is a global host toggle — there is no per-user request/approve flow yet.
-- **No TURN relay is configured by default,** and the built-in fallback (a free public Open Relay) is no longer dependable. Anyone behind a strict NAT — most mobile networks — will appear in the participant list with no video, or take minutes to connect. Set `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`; Cloudflare Realtime TURN has a free tier. The UI now shows per-participant connection state and warns once when a connection fails with no relay configured.
+- `/api/config` reports `turn`, `turnSource` (`cloudflare` / `static` / `none`) and `turnError`, which is the quickest way to check a deployment's relay.
+- **No TURN relay is configured by default,** and and there is no longer a public fallback (the old Open Relay default was dead). Anyone behind a strict NAT — most mobile networks — will appear in the participant list with no video, or take minutes to connect. Set `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`; Cloudflare Realtime TURN has a free tier. The UI now shows per-participant connection state and warns once when a connection fails with no relay configured.
 - **Recording permission is advisory.** The host's approval gates the app's own recorder; nothing can stop someone screen-recording their device. Same as Zoom.
 - **Recording on a phone cannot use a save dialog** — no mobile browser has one. Android lands in Downloads; iOS ignores the download attribute on a blob URL and opens the file instead, so the user is told to save it from the share sheet. Setting `RECORDING_UPLOAD_URL` is the reliable path on mobile.
 - **iOS records MP4, everyone else WebM.** Safari has never supported WebM recording. The extension follows the real container, and the WebM duration patch is skipped for MP4 — which means **MP4 recordings are not seekable** until something remuxes them.
