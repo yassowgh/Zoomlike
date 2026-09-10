@@ -86,13 +86,27 @@ check('the floating control is offered where the browser supports it', pip.suppo
 check('the floating source is laid out, not display:none', pip.boxed===true, JSON.stringify(pip));
 check('the floating source is not visible in the page', pip.onscreen===false, JSON.stringify(pip));
 
-// with a camera live, asking to float finds a stream (no "turn a camera on")
+// The source is kept fed continuously, because picture-in-picture is refused
+// outright on a video whose metadata has not loaded — which is what made the
+// button appear to do nothing at all.
+const fed=await C.evaluate(()=>{const v=document.getElementById('pipVideo');
+  return {src:!!v.srcObject, ready:v.readyState, w:v.videoWidth};});
+check('the floating source is loaded before anyone asks for it',
+      fed.src===true && fed.ready>=1 && fed.w>0, JSON.stringify(fed));
+
 if (pip.supported) {
-  await C.click('#pipBtn'); await S(600);
-  const t=await C.evaluate(()=>({hidden:document.getElementById('toast').hidden,text:document.getElementById('toast').textContent}));
-  check('floating finds the live video', t.hidden===true || !/Turn a camera on/i.test(t.text), JSON.stringify(t));
-  const src=await C.evaluate(()=>!!document.getElementById('pipVideo').srcObject);
-  check('the floating window is fed the call video', src===true);
+  await C.click('#pipBtn'); await S(1200);
+  const on=await C.evaluate(()=>({
+    inPip: document.pictureInPictureElement===document.getElementById('pipVideo'),
+    btnOn: document.getElementById('pipBtn').classList.contains('on'),
+    toast: document.getElementById('toast').hidden?null:document.getElementById('toast').textContent,
+  }));
+  check('pressing Float actually floats the video', on.inPip===true, JSON.stringify(on));
+  check('and the control shows it is on', on.btnOn===true, JSON.stringify(on));
+
+  await C.click('#pipBtn'); await S(800);
+  const off=await C.evaluate(()=>document.pictureInPictureElement===null);
+  check('pressing it again puts the video back', off===true);
 }
 
 // ---- ordinary invite links are unchanged --------------------------------

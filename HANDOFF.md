@@ -302,6 +302,44 @@ link puts you on the call immediately, voice only.
 - The host's own "Start the call" button takes the same road, so both ends of
   the link behave identically.
 
+### Staying in the call
+The nastiest failure this app had: minimise the browser, come back, and you
+could still hear everyone while the room showed you as gone. Audio is
+peer-to-peer and does not go through the signaling socket, so it survives —
+but the socket had died without the browser ever firing `close`, leaving
+`readyState` at OPEN with nothing reconnecting, while the room had already
+broadcast your departure.
+
+Four parts, and all four are needed:
+
+- **Heartbeat.** The client pings every 15s and treats 40s of silence as death.
+  The DO answers via `setWebSocketAutoResponse(new
+  WebSocketRequestResponsePair("ping","pong"))`, so hibernation is untouched —
+  the object is never woken to say "pong".
+- **readyState watchdog.** A 2s local timer. A half-closed socket can sit in
+  CLOSING indefinitely (it does in `wrangler dev`), so waiting for `close` is
+  not enough; watching the state recovers in ~2s instead of ~15s.
+- **Stable identity.** Each tab has a `cid` in sessionStorage, sent on the
+  socket URL. The DO matches it against live sockets *and* against
+  `recent:<cid>` in storage (kept `REJOIN_MS` = 2 min), so a reconnect keeps
+  its `connId`, name, co-host role and grants. `superseded` on a replaced
+  socket stops its close handler announcing a departure for an identity that is
+  still in the meeting, and `wasAdmitted` keeps a readmitted person out of the
+  waiting room.
+- **Grace period.** A `peer-leave` is held for 6s client-side and the tile shows
+  "reconnecting…". Come back inside that and nothing flickered; the timer is
+  also cancelled by a `welcome` that still lists them.
+
+`welcome` arrives again on every reconnect, so the client reconciles: peers not
+in the new roster are dropped, and a `peer-join` for someone already held is a
+return (no "joined" toast, media rebuilt only if the connection actually died).
+
+### The meeting clock
+`startedAt` is set when the first person is admitted and **deleted when the last
+one leaves**, which is why an empty room used to report six hours: the value
+outlived everyone in it. It is also cleared by `end-session` along with the rest
+of `SESSION_KEYS`.
+
 ### Floating video (picture-in-picture)
 Minimising the window or switching tabs must not end the call visually, so the
 video follows you as a small always-on-top window.
@@ -310,6 +348,13 @@ video follows you as a small always-on-top window.
 speaker stage (`pipSource()` falls back to any live camera in the room). It is
 positioned off-screen rather than hidden, because a `display:none` video is not
 allowed to enter picture-in-picture.
+
+Two things make it actually work, both learned the hard way: the source is fed
+**continuously** (from `renderSpotlight`, not at click time) because PiP is
+refused outright on a video whose metadata has not loaded, and `pipReady()`
+waits for that metadata anyway before asking. Feeding it only on the click made
+the button appear to do nothing at all. A voice-only call has no picture to
+float and says so.
 
 Two ways in, both feeding that element:
 - `navigator.mediaSession.setActionHandler("enterpictureinpicture", …)` — the
@@ -535,7 +580,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Nine committed suites, 164 checks in total, run with `npm test` against a
+Ten committed suites, 184 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
@@ -547,7 +592,8 @@ Nine committed suites, 164 checks in total, run with `npm test` against a
 | `tests/e2e-fixes.mjs` | `npm run test:fixes` | regressions from a real call: text size and resize, guest names, participant names, chat vs gallery, landscape phones (11) |
 | `tests/e2e-join.mjs` | `npm run test:join` | meeting defaults and join order: board off, gallery default, no join before host, room not retargetable (11) |
 | `tests/e2e-auth-ux.mjs` | `npm run test:authux` | form validation, generic credential errors, the lockout, and one-link calls (16) |
-| `tests/e2e-call.mjs` | `npm run test:call` | the one-link call end to end — no name card, no pre-join, mic on and camera off, the room's assigned name, opening the camera in-call, the floating-video wiring, and that ordinary invite links still ask who you are (21) |
+| `tests/e2e-call.mjs` | `npm run test:call` | the one-link call end to end — no name card, no pre-join, mic on and camera off, the room's assigned name, opening the camera in-call, picture-in-picture actually entering and leaving, and that ordinary invite links still ask who you are (23) |
+| `tests/e2e-resilience.mjs` | `npm run test:resilience` | a dropped socket returning as the same person with no ghost, the clock resetting in an empty room, landscape and portrait phone layout, and the lobby identity line (18) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset

@@ -34,10 +34,23 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 const DEFAULT_BG = "white";
 
+// How long a dropped participant stays recognisable. Come back inside this
+// window with the same client id and you are the same person: same id in
+// everyone's roster, same name, same co-host role and grants. Beyond it you
+// are simply someone new arriving.
+const REJOIN_MS = 2 * 60 * 1000;
+
 export class RoomDurableObject {
   constructor(state, env) {
     this.state = state;
     this.env = env;
+    // The client heartbeats to prove its socket is alive. Answering it from
+    // the runtime keeps hibernation intact — the object is never woken just to
+    // say "pong" — while the traffic itself stops idle connections being
+    // reaped and lets the client detect a dead one.
+    try {
+      this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    } catch {}
   }
 
   async fetch(request) {
@@ -89,27 +102,61 @@ export class RoomDurableObject {
     const guest = url.searchParams.get("guest") === "1";
     const skip = url.searchParams.get("skip") === "1"; // skip waiting (breakout re-join)
     const main = (url.searchParams.get("main") || "").slice(0, 64); // set inside a breakout
+    const cid = (url.searchParams.get("cid") || "").slice(0, 64);  // stable per tab
+
+    // A dropped socket that comes back — a slept phone, a closed lid, a tunnel
+    // — arrives with the client id of the socket it is replacing. Take that
+    // socket's identity over instead of arriving as a second person: the old
+    // one is a ghost the room would otherwise keep in everyone's roster, and
+    // the person themselves would come back a stranger with a new name and no
+    // permissions. The superseded flag stops its close handler announcing a
+    // departure for an identity that is still very much in the meeting.
+    let prior = null;
+    if (cid) {
+      // The old socket may still be open (the client gave up on it before the
+      // room noticed) or already gone (the close landed first). Both are the
+      // same person coming back, so look in both places.
+      for (const old of this.state.getWebSockets()) {
+        const m = this.meta(old);
+        if (m.cid !== cid) continue;
+        prior = m;
+        this.setMeta(old, { superseded: true });
+        try { old.close(1000, "replaced by a reconnect"); } catch {}
+      }
+      if (!prior) {
+        const remembered = await this.state.storage.get("recent:" + cid);
+        if (remembered) {
+          await this.state.storage.delete("recent:" + cid);
+          if (Date.now() - remembered.at < REJOIN_MS) prior = remembered;
+        }
+      }
+    }
 
     // A Durable Object cannot see the name it was looked up by, but breakout
     // plumbing needs it, so remember it from the path the Worker forwarded.
     const selfRoom = (url.pathname.match(/^\/api\/room\/([A-Za-z0-9_-]{1,64})\/ws$/) || [])[1];
     if (selfRoom) { this.selfRoomName = selfRoom; await this.state.storage.put("selfRoom", selfRoom); }
 
-    let seq = (await this.state.storage.get("seq")) || 0;
-    seq += 1;
-    await this.state.storage.put("seq", seq);
+    // seq counts arrivals, and a reconnect is not one — reusing the number
+    // keeps a caller's assigned name stable across a dropped socket.
+    let seq = prior ? prior.seq : ((await this.state.storage.get("seq")) || 0) + 1;
+    if (!prior) await this.state.storage.put("seq", seq);
 
     // A one-link caller arrives without a name. The room gives them one, so
     // the roster reads "Caller 2" rather than a blank label, and seq already
     // counts arrivals so no two callers collide.
-    const name = wanted || "Caller " + seq;
+    const name = wanted || prior?.name || "Caller " + seq;
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     if (main) await this.state.storage.put("mainRoom", main);
     server.serializeAttachment({
-      connId: crypto.randomUUID(), name, email, guest, skip, seq,
-      admitted: false, grantShare: false, grantRecord: false, moderator: false,
+      connId: prior?.connId || crypto.randomUUID(), cid, name, email, guest, skip, seq,
+      // `hello` does the admitting, but a reconnect that was already admitted
+      // must not be sent back to the waiting room.
+      admitted: false, wasAdmitted: !!prior?.admitted,
+      grantShare: !!prior?.grantShare, grantRecord: !!prior?.grantRecord,
+      moderator: !!prior?.moderator,
     });
     this.state.acceptWebSocket(server);
     return new Response(null, { status: 101, webSocket: client });
@@ -263,7 +310,7 @@ export class RoomDurableObject {
         this.send(ws, { type: "not-started" });
         return;
       }
-      if (amOwner || self.skip || !waiting) {
+      if (amOwner || self.skip || !waiting || self.wasAdmitted) {
         this.setMeta(ws, { admitted: true });
         await this.admitSend(ws);
       } else {
@@ -659,8 +706,15 @@ export class RoomDurableObject {
     await this.closeBreakouts();
   }
 
-  async webSocketClose(ws) {
+  async webSocketClose(ws, code, reason) {
+    // Finish the close handshake. Without this the peer is left in CLOSING —
+    // its `close` event never fires, so a client that dropped sits there
+    // believing it still has a socket while the room has already forgotten it.
+    try { ws.close(code === 1006 || !code ? 1000 : code, reason || ""); } catch {}
     const self = this.meta(ws);
+    // Replaced by a reconnect carrying the same identity: the person did not
+    // leave, so announcing a departure would delete them from every roster.
+    if (self.superseded) return;
     if (self.admitted) {
       this.broadcastAdmitted({ type: "peer-leave", id: self.connId }, self.connId);
       const owner = await this.state.storage.get("owner");
@@ -672,6 +726,32 @@ export class RoomDurableObject {
         await this.state.storage.delete("spotlight");
         this.broadcastAdmitted({ type: "spotlight", id: null });
       }
+    }
+    // Remember who this was for a couple of minutes. A phone that slept or a
+    // laptop that closed its lid comes back within seconds, and should come
+    // back as themselves rather than as a stranger with a new name and none of
+    // their permissions.
+    if (self.cid) {
+      await this.state.storage.put("recent:" + self.cid, {
+        connId: self.connId, name: self.name, seq: self.seq,
+        admitted: !!self.admitted, moderator: !!self.moderator,
+        grantShare: !!self.grantShare, grantRecord: !!self.grantRecord,
+        at: Date.now(),
+      });
+    }
+
+    // The meeting clock starts when the first person is admitted, and used to
+    // keep running for as long as the room object survived — which is how an
+    // empty room came to report six hours. An empty room has no meeting in it,
+    // so the clock is cleared and the next arrival starts it fresh.
+    const stillHere = this.peers().some((p) => p.connId !== self.connId && !p.superseded);
+    if (!stillHere) {
+      await this.state.storage.delete("startedAt");
+      // Tidy identities nobody is coming back for, so an old room does not
+      // accumulate them. The one just written is still inside its window.
+      const old = await this.state.storage.list({ prefix: "recent:" });
+      const stale = [...old.entries()].filter(([, v]) => Date.now() - (v?.at || 0) >= REJOIN_MS).map(([k]) => k);
+      if (stale.length) await this.state.storage.delete(stale);
     }
   }
   async webSocketError(ws) { return this.webSocketClose(ws); }

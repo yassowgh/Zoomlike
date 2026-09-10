@@ -70,7 +70,8 @@ const el = {
   instantBtn: $("instantBtn"), instantModal: $("instantModal"), instantLink: $("instantLink"),
   instantCopy: $("instantCopy"), instantClose: $("instantClose"), instantStart: $("instantStart"),
   instantHint: $("instantHint"),
-  whoami: $("whoami"), logoutBtn: $("logoutBtn"), pwToggle: $("pwToggle"),
+  whoami: $("whoami"), whoamiWrap: $("whoamiWrap"), whoamiLabel: $("whoamiLabel"),
+  logoutBtn: $("logoutBtn"), pwToggle: $("pwToggle"),
   // meeting features
   handBtn: $("handBtn"), reactBtn: $("reactBtn"), reactMenu: $("reactMenu"),
   recMenu: $("recMenu"), recServerOpt: $("recServerOpt"), reactionLayer: $("reactionLayer"),
@@ -132,6 +133,8 @@ const state = {
   startedAt: 0, clockTimer: 0, breakoutRooms: [], breakoutEndsAt: null, brkTimer: 0,
   // Chat attachments being reassembled, keyed by file id.
   incoming: new Map(),
+  // People whose socket dropped, held briefly in case it was only a blip.
+  leaving: new Map(),
   devices: { audioinput: [], videoinput: [], audiooutput: [] },
 };
 // The host is the meeting owner. A moderator is the host OR a co-host they
@@ -503,8 +506,10 @@ function enterLobby(account) {
   state.name = account.name; state.email = account.email || ""; state.token = account.token;
   state.isGuest = !!account.guest || !state.email;
   sessionStorage.setItem("zl_token", account.token);
-  // A one-link caller has no name yet — the room assigns one when they arrive.
-  el.whoami.textContent = account.name || "Caller";
+  // A one-link caller has no name yet — the room assigns one when they
+  // arrive, so the line stays hidden rather than showing a placeholder where
+  // a name belongs. A guest is not "signed in" either.
+  setWhoami(account.name || "");
   el.nameInput.value = account.name || "";
   el.quickJoin.hidden = true; el.resetScreen.hidden = true;
   el.auth.hidden = true; el.lobby.hidden = false; el.room.hidden = true;
@@ -515,6 +520,14 @@ function enterLobby(account) {
   if (accessField) accessField.hidden = state.isGuest;
   if (!state.isGuest) { wireSchedule(); loadSchedule(); }
   initLobby();
+}
+
+// The lobby's identity line. Hidden until there is a real name to put in it.
+function setWhoami(name) {
+  if (!el.whoamiWrap) return;
+  el.whoami.textContent = name || "";
+  el.whoamiLabel.textContent = state.isGuest ? "Joining as " : "Signed in as ";
+  el.whoamiWrap.hidden = !name;
 }
 
 function logout() {
@@ -584,7 +597,7 @@ function onSpeechChange(active, remote) {
     t.div.classList.toggle("speaking", !!active && (realId === active || tid === active));
   }
   if (!el.spotStage.hidden && !state.spotlight) renderSpotlight();
-  if (pipOn()) refreshPipSource();
+  refreshPipSource();
 }
 
 function renderSpotlight() {
@@ -599,6 +612,9 @@ function renderSpotlight() {
   }
   // The strip tiles already play everyone's audio — never play it twice.
   el.spotVideo.muted = true;
+  // Keep the floating window's source current whether or not it is open, so
+  // pressing Float is instant and never races the video's metadata.
+  refreshPipSource();
   el.spotWho.textContent = id === state.selfId ? "You" : (state.peerNames.get(id) || "Someone");
   el.spotTag.hidden = !state.spotlight;
   for (const [tid, t] of state.tiles) {
@@ -1166,6 +1182,23 @@ function refreshPipSource() {
   return stream;
 }
 
+// Picture-in-picture is refused outright on a video whose metadata has not
+// loaded yet, which is exactly the state a freshly assigned srcObject is in.
+// Feeding the element continuously (see renderSpotlight) means it is normally
+// ready long before anyone presses the button; this covers the case where it
+// is not.
+function pipReady(ms = 2500) {
+  const v = el.pipVideo;
+  if (v.readyState >= 1 && v.videoWidth > 0) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (ok) => { clearTimeout(t); v.removeEventListener("loadedmetadata", ok1); v.removeEventListener("resize", ok1); resolve(ok); };
+    const ok1 = () => { if (v.videoWidth > 0) done(true); };
+    const t = setTimeout(() => done(v.videoWidth > 0), ms);
+    v.addEventListener("loadedmetadata", ok1);
+    v.addEventListener("resize", ok1);
+  });
+}
+
 // iPhone Safari has picture-in-picture but not the standard API: it reports
 // document.pictureInPictureEnabled as false and floats video through
 // presentation modes instead. Checking both is what keeps the button on the
@@ -1183,6 +1216,7 @@ function pipOn() {
 async function enterPip() {
   if (pipOn()) return true;
   if (!refreshPipSource()) return false;
+  if (!(await pipReady())) return false;
   try {
     const wk = pipWebkit();
     if (wk) wk.webkitSetPresentationMode("picture-in-picture");
@@ -1211,7 +1245,9 @@ function setupPip() {
     if (pipOn()) return exitPip();
     // A click is a gesture, so this is the path that always works. If there is
     // no video anywhere yet, say so rather than failing silently.
-    if (!pipSource()) return toast("Turn a camera on first — there is no video to float");
+    // A voice-only call has no picture to float. Say so plainly rather than
+    // appearing to do nothing.
+    if (!pipSource()) return toast("No video to float yet — turn a camera on, or wait for someone else to");
     enterPip();
   };
   el.pipVideo.addEventListener("enterpictureinpicture", () => el.pipBtn.classList.add("on"));
@@ -1629,6 +1665,7 @@ async function toggleCam() {
     } catch { toast("Camera unavailable"); return; }
   }
   state.camOn = !state.camOn; applyTrackState(); broadcastMedia();
+  refreshPipSource();
 }
 
 function broadcastMedia() {
@@ -1802,7 +1839,7 @@ function connect() {
       state.name = e.detail.name;
       sig.name = state.name;
       el.nameInput.value = state.name;
-      el.whoami.textContent = state.name;
+      setWhoami(state.name);
     }
     state.speech?.setSelfId(self);
     state.allowDraw = !!allowDraw; state.allowShare = !!allowShare;
@@ -1814,6 +1851,20 @@ function connect() {
     mesh.setSelf(self);
     state.board.loadShapes(board);
     state.board.setCanDraw(state.canDraw);
+    // `welcome` also arrives on a reconnect, carrying the roster as it stands
+    // now. Anyone we are still holding who is not on that list left while we
+    // were away — drop them instead of leaving a frozen tile behind.
+    const present = new Set(peers.map((p) => p.id));
+    for (const [id, t] of state.leaving) {
+      if (!present.has(id)) continue;
+      clearTimeout(t); state.leaving.delete(id);
+      state.tiles.get(id)?.div.classList.remove("dropped");
+    }
+    for (const id of [...state.peers.keys()]) {
+      if (present.has(id)) continue;
+      state.peers.delete(id); state.peerNames.delete(id);
+      mesh.removePeer(id);
+    }
     for (const p of peers) {
       state.peerNames.set(p.id, p.name);
       state.peers.set(p.id, { name: p.name, mic: true, cam: true, hand: false, moderator: !!p.moderator });
@@ -1937,22 +1988,47 @@ function connect() {
 
   sig.addEventListener("peer-join", (e) => {
     const { id, name, moderator } = e.detail;
+    // Someone whose socket dropped and came back keeps their id, so this is a
+    // return, not an arrival: no toast, and their media is rebuilt only if it
+    // actually died with the old socket.
+    const held = state.leaving.get(id);
+    if (held) { clearTimeout(held); state.leaving.delete(id); state.tiles.get(id)?.div.classList.remove("dropped"); }
+    const returning = state.peers.has(id);
     state.peerNames.set(id, name);
     state.peers.set(id, { name, mic: true, cam: true, hand: false, moderator: !!moderator });
-    mesh.addPeer(id, name);
+    if (returning) {
+      const st = mesh.peers.get(id)?.pc?.connectionState;
+      if (st === "failed" || st === "disconnected" || st === "closed") mesh.recover(id);
+    } else {
+      mesh.addPeer(id, name);
+    }
     if (state.waitingList.delete(id)) renderWaiting();
     renderPeople(); refreshChatTo(); applyLayout();
-    toast(`${name} joined`);
+    if (!returning) toast(`${name} joined`);
   });
 
+  // Leaving and briefly dropping out look identical for a moment, and
+  // treating every drop as a departure is what made people flicker out of the
+  // roster while they were still talking. Hold them for a few seconds: if the
+  // socket was only blipping they come back with the same id and nothing
+  // visibly happened.
+  const LEAVE_GRACE = 6000;
   sig.addEventListener("peer-leave", (e) => {
-    const p = state.peers.get(e.detail.id);
-    mesh.removePeer(e.detail.id);
-    state.peers.delete(e.detail.id);
-    for (const kind of ["share", "record", "board"]) state.requests.delete(`${kind}:${e.detail.id}`);
-    if (state.recorders.delete(e.detail.id)) updateRecordingBanner();
-    renderPeople(); refreshChatTo(); renderRequests(); applyLayout();
-    if (p) toast(`${p.name} left`);
+    const id = e.detail.id;
+    if (state.leaving.has(id)) return;
+    const tile = state.tiles.get(id);
+    if (tile) tile.div.classList.add("dropped");
+    state.leaving.set(id, setTimeout(() => {
+      state.leaving.delete(id);
+      const p = state.peers.get(id);
+      mesh.removePeer(id);
+      state.peers.delete(id); state.peerNames.delete(id);
+      for (const kind of ["share", "record", "board"]) state.requests.delete(`${kind}:${id}`);
+      if (state.recorders.delete(id)) updateRecordingBanner();
+      renderPeople(); refreshChatTo(); renderRequests(); applyLayout();
+      if (p) toast(`${p.name} left`);
+    }, LEAVE_GRACE));
+    renderPeople();
   });
 
   sig.addEventListener("host", (e) => { state.host = e.detail.id; updateHostUI(); renderPeople(); });
@@ -2206,6 +2282,8 @@ function renderPeople() {
   el.peopleCount.textContent = String(1 + state.peers.size);
 }
 
+function isDropped(id) { return state.leaving.has(id); }
+
 function personRow(id, name, s, self) {
   const row = document.createElement("div");
   row.className = "prow";
@@ -2232,6 +2310,9 @@ function personRow(id, name, s, self) {
   };
   if (id === state.host) badge("Host", "badge");
   else if (s.moderator) badge("Co-host", "badge cohost");
+  // Held open after a dropped socket: say so rather than showing them as
+  // present-and-fine or removing someone who is about to be back.
+  if (!self && isDropped(id)) badge("reconnecting…", "pconn warn");
   if (s.hand) badge("✋", "pstate hand-up");
   badge((s.mic ? "🎙️" : "🔇") + (s.cam ? "" : "🚫"), "pstate");
   // Whether their video is actually connected, so "in the meeting but nobody

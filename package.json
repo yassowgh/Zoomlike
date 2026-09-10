@@ -11,13 +11,14 @@
     "test:e2e": "node tests/e2e.mjs",
     "test:controls": "node tests/e2e-controls.mjs",
     "test:auth": "node tests/e2e-auth.mjs",
-    "test": "npm run test:e2e && npm run test:controls && npm run test:meeting && npm run test:mobile && npm run test:fixes && npm run test:join && npm run test:authux && npm run test:call && npm run test:auth",
+    "test": "npm run test:e2e && npm run test:controls && npm run test:meeting && npm run test:mobile && npm run test:fixes && npm run test:join && npm run test:authux && npm run test:call && npm run test:resilience && npm run test:auth",
     "test:meeting": "node tests/e2e-meeting.mjs",
     "test:mobile": "node tests/e2e-mobile.mjs",
     "test:fixes": "node tests/e2e-fixes.mjs",
     "test:join": "node tests/e2e-join.mjs",
     "test:authux": "node tests/e2e-auth-ux.mjs",
-    "test:call": "node tests/e2e-call.mjs"
+    "test:call": "node tests/e2e-call.mjs",
+    "test:resilience": "node tests/e2e-resilience.mjs"
   },
   "devDependencies": {
     "playwright": "^1.63.0",

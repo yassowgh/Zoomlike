@@ -300,14 +300,18 @@ input { font: inherit; }
   .topbar-left, .topbar-right { gap: 6px; }
   .pill { font-size: 11px; padding: 3px 8px; }
 
-  /* A side strip does not fit on a phone — always run it along the bottom. */
-  .room[data-strip="right"] .stage { flex-direction: column; }
-  .room[data-strip="right"] .videos {
+  /* A side strip does not fit on a phone — always run it along the bottom.
+     Gallery has no strip: there the participants ARE the stage. These rules
+     used to reach it anyway (equal specificity, declared later, so they won),
+     which squashed the entire gallery into a 90px ribbon of 116px tiles with a
+     screenful of empty space underneath — on every phone, both orientations. */
+  .room:not([data-layout="gallery"])[data-strip="right"] .stage { flex-direction: column; }
+  .room:not([data-layout="gallery"])[data-strip="right"] .videos {
     width: auto; flex: 0 0 auto; flex-direction: row; border-left: 0;
     border-top: 1px solid var(--line); order: 1; overflow-x: auto; overflow-y: hidden;
   }
-  .room[data-strip="right"] .tile { width: 116px; flex: 0 0 116px; }
-  .room[data-strip="bottom"] .tile { width: 116px; flex: 0 0 116px; }
+  .room:not([data-layout="gallery"])[data-strip="right"] .tile { width: 116px; flex: 0 0 116px; }
+  .room:not([data-layout="gallery"])[data-strip="bottom"] .tile { width: 116px; flex: 0 0 116px; }
   .room[data-layout="gallery"] .videos { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
 
   /* Controls: essentials only until "More" is tapped. */
@@ -640,3 +644,37 @@ input { font: inherit; }
    never seen in the page itself. */
 .pip-source { position: fixed; left: -10000px; top: 0; width: 320px; height: 180px; }
 #pipBtn.on { background: var(--accent); color: #fff; }
+
+/* ======================= Landscape phones =======================
+   A phone on its side has about 390px of height to spend and the chrome was
+   eating a third of it. Trim the bars, drop the button labels, and put the
+   participant strip back down the side — in this shape a column fits, and a
+   bottom strip costs height there is none of. Declared last on purpose: the
+   phone rules above are equally specific, so source order decides. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .topbar { padding: 4px 8px; }
+  .controls { padding: 5px 4px; gap: 6px; padding-bottom: max(5px, env(safe-area-inset-bottom)); }
+  .ctrl { width: 38px; height: 38px; font-size: 17px; }
+  .cl { display: none; }
+  /* One person in a 16/9 tile is taller than the whole stage here, so let the
+     rows divide the height that exists instead of overflowing it. */
+  .room[data-layout="gallery"] .videos {
+    padding: 6px; gap: 6px; align-content: stretch; grid-auto-rows: minmax(0, 1fr);
+  }
+  .room[data-layout="gallery"] .tile { aspect-ratio: auto; min-height: 0; }
+
+  .room:not([data-layout="gallery"])[data-strip="right"] .stage { flex-direction: row; }
+  .room:not([data-layout="gallery"])[data-strip="right"] .videos {
+    width: 132px; flex: 0 0 132px; flex-direction: column; order: 1;
+    border-left: 1px solid var(--line); border-top: 0;
+    overflow-y: auto; overflow-x: hidden;
+  }
+  .room:not([data-layout="gallery"])[data-strip="right"] .tile { width: auto; flex: 0 0 auto; }
+}
+
+/* Someone whose socket dropped, held for a few seconds in case it was a blip. */
+.tile.dropped { opacity: .55; }
+.tile.dropped::before {
+  content: "reconnecting…"; position: absolute; inset: auto 0 50% 0; text-align: center;
+  font-size: 11px; color: var(--muted);
+}
