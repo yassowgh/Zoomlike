@@ -317,8 +317,14 @@ Two ways in, both feeding that element:
   covers minimising. The name is unknown elsewhere, where the call throws and is
   swallowed.
 - The **Float** control (`#pipBtn`), a real click and therefore a gesture, which
-  is the path that always works. It hides itself where
-  `document.pictureInPictureEnabled` is false.
+  is the path that always works.
+
+iPhone Safari has picture-in-picture but not the standard API — it reports
+`document.pictureInPictureEnabled` as false and floats video through
+`webkitSetPresentationMode` instead, with its own
+`webkitpresentationmodechanged` event. Both paths are handled, which is what
+keeps the button on the device people are most likely to minimise the browser
+on. It hides itself only where neither exists.
 
 A `visibilitychange` listener also tries on its own; it succeeds where automatic
 PiP is permitted and is a silent no-op where it is not.

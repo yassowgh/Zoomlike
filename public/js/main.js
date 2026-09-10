@@ -584,7 +584,7 @@ function onSpeechChange(active, remote) {
     t.div.classList.toggle("speaking", !!active && (realId === active || tid === active));
   }
   if (!el.spotStage.hidden && !state.spotlight) renderSpotlight();
-  if (document.pictureInPictureElement) refreshPipSource();
+  if (pipOn()) refreshPipSource();
 }
 
 function renderSpotlight() {
@@ -1166,12 +1166,28 @@ function refreshPipSource() {
   return stream;
 }
 
+// iPhone Safari has picture-in-picture but not the standard API: it reports
+// document.pictureInPictureEnabled as false and floats video through
+// presentation modes instead. Checking both is what keeps the button on the
+// device people are most likely to minimise the browser on.
+function pipWebkit() {
+  const v = el.pipVideo;
+  return v && !v.requestPictureInPicture && typeof v.webkitSetPresentationMode === "function"
+    && v.webkitSupportsPresentationMode?.("picture-in-picture") ? v : null;
+}
+function pipOn() {
+  return document.pictureInPictureElement === el.pipVideo
+    || el.pipVideo?.webkitPresentationMode === "picture-in-picture";
+}
+
 async function enterPip() {
-  if (!el.pipVideo?.requestPictureInPicture) return false;
-  if (document.pictureInPictureElement === el.pipVideo) return true;
+  if (pipOn()) return true;
   if (!refreshPipSource()) return false;
   try {
-    await el.pipVideo.requestPictureInPicture();
+    const wk = pipWebkit();
+    if (wk) wk.webkitSetPresentationMode("picture-in-picture");
+    else if (el.pipVideo?.requestPictureInPicture) await el.pipVideo.requestPictureInPicture();
+    else return false;
     return true;
   } catch {
     // Refused (unsupported, disabled by the user, or no gesture to spend).
@@ -1180,16 +1196,19 @@ async function enterPip() {
 }
 
 async function exitPip() {
-  try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); } catch {}
+  try {
+    if (document.pictureInPictureElement) await document.exitPictureInPicture();
+    else if (el.pipVideo?.webkitPresentationMode === "picture-in-picture") el.pipVideo.webkitSetPresentationMode("inline");
+  } catch {}
 }
 
 function setupPip() {
-  const supported = !!(document.pictureInPictureEnabled && el.pipVideo?.requestPictureInPicture);
+  const supported = !!((document.pictureInPictureEnabled && el.pipVideo?.requestPictureInPicture) || pipWebkit());
   if (el.pipBtn) el.pipBtn.hidden = !supported;
   if (!supported) return;
 
   el.pipBtn.onclick = () => {
-    if (document.pictureInPictureElement) return exitPip();
+    if (pipOn()) return exitPip();
     // A click is a gesture, so this is the path that always works. If there is
     // no video anywhere yet, say so rather than failing silently.
     if (!pipSource()) return toast("Turn a camera on first — there is no video to float");
@@ -1207,6 +1226,10 @@ function setupPip() {
   // no-op where it is not.
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) enterPip();
+  });
+  // Safari names its events differently too.
+  el.pipVideo.addEventListener("webkitpresentationmodechanged", () => {
+    el.pipBtn.classList.toggle("on", el.pipVideo.webkitPresentationMode === "picture-in-picture");
   });
 }
 
