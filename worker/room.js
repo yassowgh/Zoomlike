@@ -49,7 +49,9 @@ export class RoomDurableObject {
       return new Response("ok");
     }
     if (internal === "set-owner") {
-      const { email, access, cohosts, mainRoom, endsAt } = await request.json().catch(() => ({}));
+      const { email, access, cohosts, mainRoom, endsAt, started } = await request.json().catch(() => ({}));
+      // A one-link call is open from the moment the link is made.
+      if (started) await this.state.storage.put("started", true);
       if (email) await this.state.storage.put("owner", email);
       // "open"  -> anyone with the link walks straight in.
       // "approval" -> the host admits each person from the waiting room.
@@ -248,12 +250,11 @@ export class RoomDurableObject {
       if (amOwner) await this.state.storage.put("started", true);
       const started = (await this.state.storage.get("started")) === true;
 
-      // An invite link is not a key to an empty room. Until the host has
-      // opened the meeting, everyone else waits — this used to admit them
-      // precisely BECAUSE no host was present, which was backwards.
-      // skip=1 means the meeting itself is placing them (a breakout room),
-      // which the host opened by definition and where no host is present.
-      if (!amOwner && !self.skip && (!started || !host)) {
+      // An invite link is not a key to a meeting that was never opened. Once
+      // it HAS been opened the room stays open, so people can gather without
+      // the host in the room — which is the whole point of a one-link call.
+      // skip=1 means the meeting itself is placing them (a breakout room).
+      if (!amOwner && !self.skip && !started) {
         this.send(ws, { type: "not-started" });
         return;
       }

@@ -9,6 +9,8 @@
 const ITERATIONS = 100_000;
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const RESET_TTL_MS = 30 * 60 * 1000;          // password reset links last 30 minutes
+const MAX_FAILS = 5;                          // wrong passwords before a lockout
+const LOCK_MS = 5 * 60 * 1000;                // how long that lockout lasts
 
 export class AuthDurableObject {
   constructor(state, env) {
@@ -67,15 +69,40 @@ export class AuthDurableObject {
 
   async login({ email, password }) {
     email = normEmail(email);
+
+    // Too many wrong guesses recently? Say so, and don't check the password.
+    const lock = await this.state.storage.get("fail:" + email);
+    if (lock && lock.until && Date.now() < lock.until) {
+      const mins = Math.max(1, Math.ceil((lock.until - Date.now()) / 60000));
+      return json({ error: `Too many failed attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.`, locked: true }, 429);
+    }
+
     const user = await this.state.storage.get("user:" + email);
-    if (!user) return json({ error: "No account found for this email." }, 401);
-    if (!user.hash) {
+    // Deliberately the same message whether the address is unknown or the
+    // password is wrong: telling them apart reveals who has an account.
+    const wrong = () => json({ error: "Email or password is incorrect." }, 401);
+
+    if (user && !user.hash) {
       // Signed up through Google and never set a password.
       return json({ error: "This account uses Google sign-in. Use \u201cContinue with Google\u201d, or reset your password to set one." }, 401);
     }
-    const ok = await verifyPassword(password || "", user.salt, user.hash);
-    if (!ok) return json({ error: "Incorrect password." }, 401);
+    const ok = user && await verifyPassword(password || "", user.salt, user.hash);
+    if (!ok) {
+      await this.noteFailure(email);
+      return wrong();
+    }
+    await this.state.storage.delete("fail:" + email);
     return json({ email: user.email, name: user.name });
+  }
+
+  // Counts wrong passwords and locks the account for a while once there have
+  // been too many. Note this is per email address, so someone who knows an
+  // address can deliberately lock its owner out for five minutes.
+  async noteFailure(email) {
+    const rec = (await this.state.storage.get("fail:" + email)) || { count: 0, until: 0 };
+    rec.count += 1;
+    if (rec.count >= MAX_FAILS) { rec.until = Date.now() + LOCK_MS; rec.count = 0; }
+    await this.state.storage.put("fail:" + email, rec);
   }
 
   // Sign-in through Google. Accounts are keyed by verified email address, so
@@ -129,6 +156,7 @@ export class AuthDurableObject {
     if (!user) return json({ error: "This account no longer exists." }, 400);
     const { salt, hash } = await hashPassword(password);
     await this.state.storage.put("user:" + rec.email, { ...user, salt, hash });
+    await this.state.storage.delete("fail:" + rec.email); // a reset clears any lockout
     return json({ email: user.email, name: user.name });
   }
 }

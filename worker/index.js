@@ -129,6 +129,25 @@ export default {
       return Response.json({ ...user, token });
     }
 
+    // ---- One-link call --------------------------------------------------
+    // A room that is already open, so whoever follows the link is talking
+    // within seconds instead of waiting for a host to appear.
+    if (url.pathname === "/api/instant" && request.method === "POST") {
+      const payload = await readToken(bearer(request), secret);
+      if (!payload || payload.guest || !payload.email) return Response.json({ error: "Sign in to create a call link." }, { status: 401 });
+      const room = "call-" + crypto.randomUUID().slice(0, 8);
+      try {
+        const rstub = env.ROOMS.get(env.ROOMS.idFromName(room));
+        await rstub.fetch(new Request("https://do/set-owner", {
+          method: "POST",
+          headers: { "X-Internal": "set-owner" },
+          // open access, and already started so nobody is held at the door
+          body: JSON.stringify({ email: payload.email, access: "open", started: true }),
+        }));
+      } catch {}
+      return Response.json({ room, url: new URL(`/room/${room}`, url.origin).toString() });
+    }
+
     // ---- Scheduled meetings (auth required, no guests) -----------------
     if (url.pathname === "/api/meetings") {
       const payload = await readToken(bearer(request), secret);

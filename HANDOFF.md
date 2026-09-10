@@ -280,12 +280,31 @@ new track and hands it to every peer via `replaceTrack`, so nobody is
 disconnected. Speaker choice needs `setSinkId` and the field hides itself where
 that is missing.
 
+### One-link call
+`POST /api/instant` (signed in) makes a room that is already open and already
+started, and returns its link. Whoever follows it is talking in seconds: no
+waiting room, no host needed in the room, no account — just a display name.
+
+### Sign-in behaviour
+- Wrong address and wrong password give the **same** message, so the form
+  cannot be used to discover who has an account.
+- Five failed passwords lock that address for five minutes (`fail:<email>` in
+  the AUTH DO, cleared on success or a password reset). Note this is keyed by
+  email, so someone who knows an address can deliberately lock its owner out
+  for five minutes — a deliberate trade for the brute-force protection.
+- The form validates before submitting and marks the offending field. It used
+  to `return` in silence, which reads as a dead button.
+- Registering an address that already exists switches to the Log in tab.
+- "Forgot your password?" only appears when this deployment can actually send
+  email (`/api/config` → `passwordReset`).
+
 ### A meeting has to be opened before anyone can join
-An invite link is not a key to an empty room. Until the **owner** has joined
-once (`started`, a session key), everyone else is held on a "hasn't started
-yet" screen and let in automatically when the host arrives. `skip=1` bypasses
-this, because that marks the meeting *placing* someone — a breakout room, which
-a moderator opened by definition and where no host is present.
+An invite link is not a key to an empty room. Until the meeting has been opened (`started`, a session key — set when the
+owner first joins, or up front for a one-link call), everyone else is held on
+a "hasn't started yet" screen and let in automatically when it opens. The gate
+is on *having been opened*, **not** on a host being present: requiring a live
+host broke one-link calls and breakout rooms. `skip=1` bypasses it too, since
+that marks the meeting placing someone.
 
 ### Defaults a meeting opens with
 - **Whiteboard off.** The host turns it on; everyone else asks.
@@ -472,7 +491,7 @@ Auth/registration · **one-tap join from an invite link (no account)** · lobby 
 
 ## 9. Testing
 
-Seven committed suites, 127 checks in total, run with `npm test` against a
+Eight committed suites, 143 checks in total, run with `npm test` against a
 **local** `wrangler dev`:
 
 | Suite | Script | Covers |
@@ -483,6 +502,7 @@ Seven committed suites, 127 checks in total, run with `npm test` against a
 | `tests/e2e-mobile.mjs` | `npm run test:mobile` | every screen and panel at 390px and 320px: overflow, tap targets, covered controls, skippable pre-join (20) |
 | `tests/e2e-fixes.mjs` | `npm run test:fixes` | regressions from a real call: text size and resize, guest names, participant names, chat vs gallery, landscape phones (11) |
 | `tests/e2e-join.mjs` | `npm run test:join` | meeting defaults and join order: board off, gallery default, no join before host, room not retargetable (11) |
+| `tests/e2e-auth-ux.mjs` | `npm run test:authux` | form validation, generic credential errors, the lockout, and one-link calls (16) |
 | `tests/e2e-auth.mjs` | `npm run test:auth` | Google sign-in redirect + password reset (23) |
 
 `tests/e2e-auth.mjs` starts its own mailbox on port 8799 to catch the reset

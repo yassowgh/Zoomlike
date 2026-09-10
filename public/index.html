@@ -63,17 +63,21 @@
           <label class="field" id="nameField" hidden>
             <span>Full name</span>
             <input id="authName" type="text" placeholder="Your name" autocomplete="name" maxlength="40" />
+            <small class="field-err" id="errName" hidden></small>
           </label>
           <label class="field">
             <span>Email</span>
-            <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" inputmode="email" required />
+            <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email"
+                   inputmode="email" autocapitalize="none" spellcheck="false" required />
+            <small class="field-err" id="errEmail" hidden></small>
           </label>
           <label class="field">
             <span>Password</span>
             <div class="pw-wrap">
-              <input id="authPassword" type="password" placeholder="At least 6 characters" autocomplete="current-password" required />
+              <input id="authPassword" type="password" placeholder="Your password" autocomplete="current-password" required />
               <button id="pwToggle" class="pw-toggle" type="button" tabindex="-1" aria-label="Show password">👁️</button>
             </div>
+            <small class="field-err" id="errPassword" hidden></small>
           </label>
           <p class="forgot-row" id="forgotRow"><button id="forgotBtn" class="linkish" type="button">Forgot your password?</button></p>
           <button id="authSubmit" class="primary" type="submit">Log in</button>
@@ -155,6 +159,7 @@
 
         <div class="lobby-actions">
           <button id="joinBtn" class="primary" type="button">Join / Create room</button>
+          <button id="instantBtn" class="ghost" type="button" title="Create a link that drops people straight into a call">⚡ One-link call</button>
         </div>
 
         <div class="sched" id="schedSection">
@@ -183,6 +188,23 @@
         <p class="hint" id="lobbyHint"></p>
       </div>
       <footer class="lobby-foot">Whiteboard-first · Peer-to-peer video · Runs on Cloudflare</footer>
+
+      <!-- One-link call: share the link, they are talking as soon as they click -->
+      <div id="instantModal" class="modal" hidden>
+        <div class="modal-card">
+          <h3>⚡ Your call link is ready</h3>
+          <p>Anyone who opens this is in the call straight away — no account, no waiting room.</p>
+          <div class="row">
+            <input id="instantLink" type="text" readonly />
+            <button id="instantCopy" class="ghost" type="button">Copy</button>
+          </div>
+          <p class="hint" id="instantHint"></p>
+          <div class="modal-actions">
+            <button id="instantClose" class="ghost" type="button">Close</button>
+            <button id="instantStart" class="primary" type="button">Start the call</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ========================= PRE-JOIN PREVIEW ========================= -->

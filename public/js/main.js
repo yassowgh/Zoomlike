@@ -65,6 +65,10 @@ const el = {
   authEmail: $("authEmail"), authPassword: $("authPassword"), authSubmit: $("authSubmit"),
   authHint: $("authHint"), authTagline: $("authTagline"), nameField: $("nameField"),
   tabLogin: $("tabLogin"), tabRegister: $("tabRegister"),
+  errEmail: $("errEmail"), errPassword: $("errPassword"), errName: $("errName"),
+  instantBtn: $("instantBtn"), instantModal: $("instantModal"), instantLink: $("instantLink"),
+  instantCopy: $("instantCopy"), instantClose: $("instantClose"), instantStart: $("instantStart"),
+  instantHint: $("instantHint"),
   whoami: $("whoami"), logoutBtn: $("logoutBtn"), pwToggle: $("pwToggle"),
   // meeting features
   handBtn: $("handBtn"), reactBtn: $("reactBtn"), reactMenu: $("reactMenu"),
@@ -170,7 +174,10 @@ async function initAuth() {
   try {
     state.config = await (await fetch("/api/config")).json();
     el.googleBox.hidden = !state.config.googleAuth;
-  } catch { el.googleBox.hidden = true; }
+    // Offering a reset this server cannot send is a dead end, so only show it
+    // once we know email is configured.
+    el.forgotRow.hidden = !state.config.passwordReset;
+  } catch { el.googleBox.hidden = true; el.forgotRow.hidden = true; }
 
   // Coming back from Google: the token rides in the fragment so it never
   // reaches a server log. Take it and scrub it from the address bar.
@@ -335,8 +342,33 @@ async function quickJoinAs(name) {
 }
 
 let authMode = "login";
+
+function setHint(text, isError) {
+  el.authHint.textContent = text;
+  el.authHint.classList.toggle("error", !!isError);
+}
+function fieldError(errId, input, message) {
+  const slot = document.getElementById(errId);
+  if (slot) { slot.textContent = message; slot.hidden = false; }
+  input.classList.add("invalid");
+  input.setAttribute("aria-invalid", "true");
+  return input;
+}
+function clearFieldErrors() {
+  setHint("", false);
+  for (const id of ["errEmail", "errPassword", "errName"]) {
+    const slot = document.getElementById(id);
+    if (slot) { slot.hidden = true; slot.textContent = ""; }
+  }
+  for (const input of [el.authEmail, el.authPassword, el.authName]) {
+    input.classList.remove("invalid");
+    input.removeAttribute("aria-invalid");
+  }
+}
+
+let setMode = () => {};
 function wireAuthForm() {
-  const setMode = (mode) => {
+  setMode = (mode) => {
     authMode = mode;
     const reg = mode === "register";
     el.tabLogin.classList.toggle("active", !reg);
@@ -346,11 +378,22 @@ function wireAuthForm() {
     el.authSubmit.textContent = reg ? "Create account" : "Log in";
     el.authTagline.textContent = reg ? "Create an account to start meeting." : "Log in to start meeting.";
     el.authPassword.autocomplete = reg ? "new-password" : "current-password";
-    el.forgotRow.hidden = reg;
-    el.authHint.textContent = "";
+    el.authPassword.placeholder = reg ? "At least 6 characters" : "Your password";
+    // Only offer a reset when this deployment can actually send one.
+    el.forgotRow.hidden = reg || !state.config?.passwordReset;
+    clearFieldErrors();
   };
   el.tabLogin.onclick = () => setMode("login");
   el.tabRegister.onclick = () => setMode("register");
+
+  for (const input of [el.authEmail, el.authPassword, el.authName]) {
+    input.addEventListener("input", () => {
+      input.classList.remove("invalid");
+      input.removeAttribute("aria-invalid");
+      const slot = document.getElementById("err" + input.id.replace("auth", ""));
+      if (slot) { slot.hidden = true; slot.textContent = ""; }
+    });
+  }
 
   el.pwToggle.onclick = () => {
     const show = el.authPassword.type === "password";
@@ -363,9 +406,20 @@ function wireAuthForm() {
     const email = el.authEmail.value.trim();
     const password = el.authPassword.value;
     const name = el.authName.value.trim();
-    if (!email || !password) return;
+
+    // Say what is wrong and mark the field. Submitting used to return in
+    // silence, which reads as "the button does nothing".
+    clearFieldErrors();
+    let bad = null;
+    if (authMode === "register" && name.length < 2) bad = fieldError("errName", el.authName, "Please enter your name.") || bad;
+    if (!email) bad = fieldError("errEmail", el.authEmail, "Please enter your email address.") || bad;
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad = fieldError("errEmail", el.authEmail, "That doesn't look like an email address.") || bad;
+    if (!password) bad = fieldError("errPassword", el.authPassword, "Please enter your password.") || bad;
+    else if (authMode === "register" && password.length < 6) bad = fieldError("errPassword", el.authPassword, "Use at least 6 characters.") || bad;
+    if (bad) { bad.focus(); return; }
+
     el.authSubmit.disabled = true;
-    el.authHint.textContent = authMode === "register" ? "Creating account…" : "Logging in…";
+    setHint(authMode === "register" ? "Creating account…" : "Logging in…", false);
     try {
       const r = await fetch("/api/auth/" + authMode, {
         method: "POST",
@@ -373,11 +427,18 @@ function wireAuthForm() {
         body: JSON.stringify({ email, password, name }),
       });
       const data = await r.json();
-      if (!r.ok) { el.authHint.textContent = data.error || "Something went wrong."; return; }
+      if (!r.ok) {
+        setHint(data.error || "Something went wrong.", true);
+        // Trying to register an address that already exists is nearly always
+        // someone who meant to log in, so put them on the right tab.
+        if (r.status === 409) { setMode("login"); setHint(data.error, true); el.authPassword.focus(); }
+        else if (r.status === 401 || r.status === 429) { el.authPassword.select(); }
+        return;
+      }
       localStorage.setItem("zl_token", data.token);
       enterLobby(data);
     } catch {
-      el.authHint.textContent = "Network error. Please try again.";
+      setHint("Network error. Please try again.", true);
     } finally {
       el.authSubmit.disabled = false;
     }
@@ -904,10 +965,55 @@ function initLobby() {
     lobbyWired = true;
     el.randomRoomBtn.onclick = () => (el.roomInput.value = randomRoom());
     el.joinBtn.onclick = () => startJoin();
+    wireInstantCall();
     el.logoutBtn.onclick = logout;
     el.roomInput.addEventListener("keydown", (e) => e.key === "Enter" && startJoin());
   }
   if (urlRoom) startJoin();
+}
+
+// ------------------------------------------------------- one-link call
+// A link that puts someone in the call the moment they open it: the room is
+// created already open and already started, so there is no waiting room and
+// nobody is held back for a host.
+function wireInstantCall() {
+  if (!el.instantBtn) return;
+  el.instantBtn.hidden = state.isGuest;   // guests cannot own a room
+  el.instantBtn.onclick = async () => {
+    el.instantBtn.disabled = true;
+    el.lobbyHint.textContent = "Creating your call link…";
+    try {
+      const r = await fetch("/api/instant", { method: "POST", headers: { Authorization: "Bearer " + state.token } });
+      const data = await r.json();
+      if (!r.ok) { el.lobbyHint.textContent = data.error || "Could not create a call link."; return; }
+      state.instantRoom = data.room;
+      el.instantLink.value = data.url;
+      el.instantHint.textContent = "";
+      el.instantModal.hidden = false;
+      el.lobbyHint.textContent = "";
+      el.instantLink.select();
+    } catch {
+      el.lobbyHint.textContent = "Network error. Please try again.";
+    } finally {
+      el.instantBtn.disabled = false;
+    }
+  };
+  el.instantCopy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(el.instantLink.value);
+      el.instantHint.textContent = "Link copied — send it to whoever you want on the call.";
+    } catch {
+      el.instantLink.select();
+      el.instantHint.textContent = "Press Ctrl/Cmd+C to copy the selected link.";
+    }
+  };
+  el.instantClose.onclick = () => { el.instantModal.hidden = true; };
+  el.instantStart.onclick = () => {
+    el.instantModal.hidden = true;
+    el.roomInput.value = state.instantRoom;
+    state.access = "open";
+    openPrejoin(state.instantRoom);
+  };
 }
 
 // Everyone passes through the camera check on the way in — except when the
